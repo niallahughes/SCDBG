@@ -1,18 +1,27 @@
+
 struct run_time_options
 {
+	int cur_step;
 	int verbose;
-	int nasm_force;
 	uint32_t steps;
-	int testnumber;
-	int getpc;
 	char *graphfile;
 	bool from_stdin;
-	char *from_argos_csi;
 	unsigned char *scode;
 	uint32_t size;
-	int offset;
-	char *profile_file;
-	bool interactive;
+	uint32_t offset;
+	bool file_mode;
+	char sc_file[500];
+	bool dump_mode;
+	int interactive_hooks;
+	bool adjust_offsets;
+	int  log_after_va;
+	int  log_after_step;
+	int  verbosity_after;
+	int  verbosity_onerr;
+	bool exec_till_ret;
+	int  time_delay;
+	bool show_hexdumps;
+	char* break_at_instr;
 
 	struct 
 	{
@@ -21,22 +30,12 @@ struct run_time_options
 			char *host;
 			int port;
 		}connect;
-		struct 
-		{
-			char *host;
-			int port;
-		}bind;
-
-		struct 
-		{
-			struct emu_hashtable *commands;
-		}commands;
 
 	}override;
+
 };
 
 extern struct run_time_options opts;
-
 
 bool cmp(void *a, void *b);
 uint32_t hash(void *key);

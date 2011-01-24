@@ -1,5 +1,20 @@
 		Changelog for libemu
 
+1.22.11 -dzzie
+   cloned from current libemu git
+   dll changes 
+      - added export emu_disasm_addr
+      - added export emu_env_w32_export_new_hook so app devs can implement api hooks without a stub in dll
+      - made sure all kernel32 hooks call user hooks 
+      - added support for salc (0xd6) opcode
+      - all changes marked w/dzzie
+   sctest project has been heavily modified see help screen. 
+      - new hooks, new cmdline opts, changed logging, interactive debug prompt, support for seh, etc
+      - i would rename it to scdbg in the source but i dont want to screw up the make files
+         so just rename the exe after compilation.. 
+      - the visual studio workspace and project files are only for editing ! you must use gcc to compile
+         this has been compiled with the current version of cygwin with dev packages installed.
+   
 30.11.2008 libemu 0.2.0
  ( created with svn log -r HEAD:1385 | grep -v -- "----" | grep -v ^r | grep -v ^libemu | grep -v "^$")
  - stubs for 

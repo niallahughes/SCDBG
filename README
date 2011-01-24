@@ -13,6 +13,8 @@
 	
 homepage: http://libemu.mwcollect.org
 
+this build has been modified form original. see CHANGES for details
+windows binaries and some sample shellcode have been provided in the /bin folder
 
 building from svn:
   autoreconf -v -i

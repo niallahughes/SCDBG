@@ -92,7 +92,22 @@ int32_t emu_env_w32_export_hook(struct emu_env *env,
 								uint32_t		(*fnhook)(struct emu_env *env, struct emu_env_hook *hook, ...),
 								void *userdata);
 
-
+/** -- added dzzie 1-23-11
+ * User code will implement its own fresh hook for an dll export from a emu env dll
+ * 
+ * @param env        the env
+ * @param exportname the exportname, f.e. "socket"
+ * @param fnhook     pointer to the hook function
+ * 
+ * @return on success: 0
+ *         on failure: -1
+ *
+ * NOTE: you can not hook exports already handled by libemu dll with this func. use above version instead.
+*/
+int32_t emu_env_w32_export_new_hook(struct emu_env *env,
+								const char *exportname, 
+								int32_t		(*fnhook)(struct emu_env *env, struct emu_env_hook *hook),
+								void *userdata);
 
 /**
  * Check if eip is within a loaded dll,

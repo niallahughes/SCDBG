@@ -398,6 +398,18 @@ BOOL DeleteFile(
 	uint32_t filename;
 	POP_DWORD(c, &filename);
 
+	//------------- dzzie---------
+	struct emu_memory *mem = emu_memory_get(env->emu);
+	struct emu_string *s_filename = emu_string_new();
+	emu_memory_read_string(mem, filename, s_filename, 256);
+
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, emu_string_char(s_filename), NULL );
+	}
+	emu_string_free(s_filename);
+	//----------------------------
+
 	if (env->profile != NULL)
 	{
 		emu_profile_function_add(env->profile, "DeleteFile");
@@ -511,6 +523,12 @@ DWORD WINAPI GetVersion(void);
 	uint32_t version = 0xa280105;
 	emu_cpu_reg32_set(c, eax, version);
 
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook);
+	}
+
 	if ( env->profile != NULL )
 	{
 		emu_profile_function_add(env->profile, "GetVersion");
@@ -578,6 +596,12 @@ FFARPROC WINAPI GetProcAddress(
 		}
 	}
 
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, module, emu_string_char(procname) );
+	}
+
 	if ( env->profile != NULL )
 	{
 		emu_profile_function_add(env->profile, "GetProcAddress");
@@ -627,6 +651,12 @@ UINT GetSystemDirectory(
 	emu_memory_write_block(emu_memory_get(env->emu), p_buffer, sysdir, 20);
 	emu_cpu_reg32_set(c, eax, 19);
 
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, NULL, NULL );
+	}
+
 	if ( env->profile != NULL )
 	{
 		emu_profile_function_add(env->profile, "GetSystemDirectory");
@@ -669,6 +699,12 @@ DWORD WINAPI GetTempPath(
 	emu_memory_write_block(emu_memory_get(env->emu), p_buffer, path, 8);
 	emu_cpu_reg32_set(c, eax, 7);
 
+	//dzzie - really the user hooks can just grab the args from esp-x
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, bufferlength, p_buffer );
+	}
+
 	if (env->profile != NULL)
 	{
 		emu_profile_function_add(env->profile, "GetTempPathA");
@@ -696,6 +732,12 @@ int32_t env_w32_hook_GetTickCount(struct emu_env *env, struct emu_env_hook *hook
 	uint32_t tickcount = rand();
 
 	emu_cpu_reg32_set(c, eax, tickcount);
+
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook );
+	}
 
 
 	if (env->profile != NULL)
@@ -921,6 +963,11 @@ int32_t	env_w32_hook_LoadLibrayA(struct emu_env *env, struct emu_env_hook *hook)
         }
 	}
 
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, dllname );
+	}
 
 	if (env->profile != NULL)
 	{
@@ -973,6 +1020,12 @@ void *malloc(
 	else
 		emu_cpu_reg32_set(c, eax, addr);
 
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, size);
+	}
+
 	
     emu_cpu_eip_set(c, eip_save);
 	return 0;
@@ -1012,6 +1065,12 @@ void *memset(
 
 	logDebug(env->emu, "memset(0x%08x, 0x%08x, %i)\n", dest, writeme, size);
 	
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, dest, writeme, size );
+	}
+
 	emu_cpu_reg32_set(c, eax, dest);
 
     emu_cpu_eip_set(c, eip_save);
@@ -1037,6 +1096,12 @@ int32_t env_w32_hook_Sleep(struct emu_env *env, struct emu_env_hook *hook)
 
 	uint32_t dwMilliseconds;
 	POP_DWORD(c, &dwMilliseconds);
+
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, dwMilliseconds );
+	}
 
 	emu_cpu_reg32_set(c, eax, 0);
 
@@ -1071,6 +1136,12 @@ int32_t env_w32_hook_SetUnhandledExceptionFilter(struct emu_env *env, struct emu
 
 
 	logDebug(env->emu, "Exception filter %08x\n", lpfilter);
+
+	//dzzie
+	if ( hook->hook.win->userhook != NULL )
+	{
+		hook->hook.win->userhook(env, hook, lpfilter );
+	}
 
 	emu_cpu_reg32_set(c, eax, 0x7C81CDDA);
 

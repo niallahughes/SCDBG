@@ -40,6 +40,20 @@ int32_t prefix_fn(struct emu_cpu *c, struct emu_cpu_instruction *i)
 	return 0;
 }
 
+//dzzie
+int32_t instr_salc_d6(struct emu_cpu *c, struct emu_cpu_instruction *i)
+{
+	 
+	/* d6 
+		SALC stands for SET the Carry flag in AL
+		sets AL=FF if the Carry Flag is set (CF=1), 
+		or resets AL=00 if the Carry Flag is clear (CF=0).  
+	 */   
+	   
+	*c->reg8[al] = CPU_FLAG_ISSET(c,f_cf) ? 0xFF : 0x00 ;
+
+	return 0;
+}
 
 int32_t instr_daa_27(struct emu_cpu *c, struct emu_cpu_instruction *i)
 {

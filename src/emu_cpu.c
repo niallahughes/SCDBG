@@ -918,3 +918,45 @@ void emu_cpu_debugflag_unset(struct emu_cpu *c, uint8_t flag)
 	CPU_DEBUG_FLAG_UNSET(c, flag);	
 }
 
+
+
+//------------------------------------------------------------
+//new exported handy enough to be worth including.. -dzzie
+//str must be buffer at least 81 characters long..
+//returns instruction size
+uint32_t emu_disasm_addr(struct emu_cpu *c, uint32_t eip, char *str)
+{
+	INSTRUCTION inst;
+
+	uint8_t data[32];
+
+	emu_memory_read_block(c->mem,eip,data,32);
+    //uint32_t expected_instr_size = dasm_print_instruction(c->eip,dis,0,c->instr_string);
+
+
+	// step 2: fetch instruction-
+	uint32_t instrsize = get_instruction(&inst, data, MODE_32);
+	if( instrsize == 0 )
+	{
+//		printf("invalid instruction\n");
+		str = 0;
+		return 0;
+	}
+
+	str[81] = '\0';
+	memset(str, 0x20, 81);
+
+	int i; 
+	for (i=0;i<instrsize;i++)
+	{
+		snprintf(str+i*2, 36-2*i, "%02X", data[i]);
+	}
+	memset(str+strlen(str), 0x20, 81-strlen(str));
+
+	// step 3: print it
+	get_instruction_string(&inst, FORMAT_INTEL, 0, str+32, 31);
+
+	return instrsize;
+}
+//----------------------------------------------------------
+

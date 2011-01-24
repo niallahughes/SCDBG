@@ -424,6 +424,50 @@ struct emu_env_hook *emu_env_w32_eip_check(struct emu_env *env)
 	return NULL;
 }
 
+//dzzie this new export allows dll clients to hook api not implemented by libemu
+//note that the fnhook prototypes are different user must handle stack and eip on own..
+//-----------------------------------------------------------------------
+int32_t emu_env_w32_export_new_hook(struct emu_env *env,
+								const char *exportname, 
+								int32_t	(*fnhook)(struct emu_env *env, struct emu_env_hook *hook),
+								void *userdata)
+{
+	int numdlls=0;
+	while ( env->env.win->loaded_dlls[numdlls] != NULL )
+	{
+		if (1)//dllname == NULL || strncasecmp(env->loaded_dlls[numdlls]->dllname, dllname, strlen(env->loaded_dlls[numdlls]->dllname)) == 0)
+		{
+			struct emu_hashtable_item *ehi = emu_hashtable_search(env->env.win->loaded_dlls[numdlls]->exports_by_fnname, (void *)exportname);
+			if (ehi != NULL)
+			{
+#if 0
+				printf("hooked %s\n",  exportname);
+#endif
+				struct emu_env_hook *hook = (struct emu_env_hook *)ehi->value;
+				if(hook->hook.win->fnhook != 0){
+					//this message will only be shown to developers would not be hit after that..
+					printf("Can not set new hook on %s.\n", exportname);
+					printf("Already implemented in dll use emu_env_w32_export_hook instead\n");
+					exit(-1);
+					return -1;
+				}else{
+					//the user is now responsible for stack clean up and arg dereferencing
+					hook->hook.win->fnhook = fnhook;
+				}
+				hook->hook.win->userdata = userdata;
+				return 0;
+			}
+		}
+		numdlls++;
+	}
+#if 0
+	printf("hooking %s failed\n", exportname);
+#endif
+	return -1;
+}
+//----------------------------------------------------------
+
+
 int32_t emu_env_w32_export_hook(struct emu_env *env,
 								const char *exportname, 
 								uint32_t		(*fnhook)(struct emu_env *env, struct emu_env_hook *hook, ...),

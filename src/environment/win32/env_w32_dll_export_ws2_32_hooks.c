@@ -386,7 +386,7 @@ int recv(
 	{
 		returnvalue = hook->hook.win->userhook(env, hook, 
 											   s,
-											   buffer,
+											   buffer,   /* note: buf address is not original get from stack mem in user hook -dz */
 											   xlen,
 											   flags);
 	}else

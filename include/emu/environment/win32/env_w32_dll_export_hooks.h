@@ -995,6 +995,7 @@ struct emu_env_w32_dll_export ws2_32_exports[] =
 	{"accept", 0x00011028, env_w32_hook_accept, NULL},
 	{"bind", 0x00003E00, env_w32_hook_bind, NULL},
 	{"closesocket", 0x00009639, env_w32_hook_closesocket, NULL},
+	/*{"closesocket", 0x00009639, NULL, NULL}, dzzie for testing new hook functionality*/
 	{"connect", 0x0000406A, env_w32_hook_connect, NULL},
 	{"getpeername", 0x00010B50, NULL, NULL},
 	{"getsockname", 0x0000951E, NULL, NULL},
