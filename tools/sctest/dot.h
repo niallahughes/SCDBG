@@ -6,6 +6,7 @@ struct instr_vertex
 	struct emu_env_linux_syscall *syscall;
 };
 
+extern struct run_time_options opts;
 
 struct instr_vertex *instr_vertex_new(uint32_t theeip, const char *instr_string);
 void instr_vertex_free(struct instr_vertex *iv);
