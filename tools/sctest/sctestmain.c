@@ -674,11 +674,18 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_hook(env, "VirtualProtect", user_hook_VirtualProtect, NULL);
 
 	//new export added 1-23-11 to allow for hooking of calls not implemented in dll	
-	//emu_env_w32_export_new_hook(env, "closesocket", new_user_hook_closesocket, NULL);
 
 	//1-26-11 dz
 	emu_env_w32_export_new_hook(env, "GetModuleHandleA", new_user_hook_GetModuleHandleA, NULL);
-	
+
+	//-----handled by the generic stub
+	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "CreateFileMappingA", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "MapViewOfFile", new_user_hook_GenericStub, NULL);
+	//----------------------------
+
+	emu_env_w32_export_new_hook(env, "CreateProcessInternalA", new_user_hook_CreateProcessInternalA, NULL);
+
 	emu_env_w32_load_dll(env->env.win,"user32.dll");
 	emu_env_w32_export_new_hook(env, "MessageBoxA", new_user_hook_MessageBoxA, NULL);
 
@@ -841,6 +848,8 @@ int run_sc(void)
 	emu_memory_write_block(mem, 0x252020+0x40, uni_k32, 23 ); //embed the data
 	emu_memory_write_dword(mem, 0x252020+0x20, 0x252020+0x40); //embed the pointer
 
+	//0x7df7b0bb - some of the shellcodes look for hooks set on some API, lets add a couple
+    emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //urldownload to file
 
 	printf("Writing code to memory\n\n");	
 	emu_memory_write_block(mem, static_offset, opts.scode,  opts.size);

@@ -49,12 +49,12 @@ uint32_t user_hook_GetTempPath(struct emu_env *env, struct emu_env_hook *hook, .
 uint32_t user_hook_Sleep(struct emu_env *env, struct emu_env_hook *hook, ...);
 uint32_t user_hook_VirtualProtect(struct emu_env *env, struct emu_env_hook *hook, ...);
 
-//1-22-11 - another dll mod to allow for user hooking of arbitrary functions
-//int32_t	new_user_hook_closesocket(struct emu_env *env, struct emu_env_hook *hook);
-
+//1-26-11 - another dll mod to allow for user hooking of arbitrary functions
 int32_t	new_user_hook_GetModuleHandleA(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_MessageBoxA(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_ShellExecuteA(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_SHGetSpecialFolderPathA(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_CreateProcessInternalA(struct emu_env *env, struct emu_env_hook *hook);
 
 

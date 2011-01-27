@@ -1230,7 +1230,7 @@ uint32_t user_hook_VirtualProtect(struct emu_env *env, struct emu_env_hook *hook
 	//printf("Hook me Captain Cook!\n");
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
-	uint32_t retaddr = get_ret(env, -24);
+	uint32_t retaddr = get_ret(env, -20);
 
 /*
  * BOOL VirtualProtect( 
@@ -1244,36 +1244,17 @@ uint32_t user_hook_VirtualProtect(struct emu_env *env, struct emu_env_hook *hook
 	va_start(vl, hook);
 	int32_t addr = va_arg(vl, int32_t);
 	int32_t size = va_arg(vl, int32_t);
+	int32_t protect = va_arg(vl, int32_t);
 	va_end(vl);
 
-	printf("%x\tVirtualProtect(adr=%x, sz=%x)\n",retaddr, addr, size );
+	printf("%x\tVirtualProtect(adr=%x, sz=%x, flags=%x)\n",retaddr, addr, size ,protect);
 
 	return 0;
 }
 
 
-/* this is confirmed as working :Dzzie 
-   this one is just an example i used for testing. 
-   will add real ones as i find shellcode that need them.
-
-int32_t	new_user_hook_closesocket(struct emu_env *env, struct emu_env_hook *hook)
-{
-
-	struct emu_cpu *c = emu_cpu_get(env->emu);
-
-	uint32_t eip_save;
-
-	POP_DWORD(c, &eip_save);
- 
-	uint32_t s;
-	POP_DWORD(c, &s);
-
-	printf("support for new user hooks confirmed! my closesocket called\n");
-	
-	emu_cpu_reg32_set(c, eax, 0);
-	emu_cpu_eip_set(c, eip_save);
-	return 0;
-}
+/*
+-------------------	new user hook format stubs below here ----------------------------
 */
 
 int32_t	new_user_hook_GetModuleHandleA(struct emu_env *env, struct emu_env_hook *hook)
@@ -1470,4 +1451,117 @@ CopyBOOL SHGetSpecialFolderPath(
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
 }
+
+int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	HANDLE WINAPI CreateFileMapping(
+	  __in      HANDLE hFile,
+	  __in_opt  LPSECURITY_ATTRIBUTES lpAttributes,
+	  __in      DWORD flProtect,
+	  __in      DWORD dwMaximumSizeHigh,
+	  __in      DWORD dwMaximumSizeLow,
+	  __in_opt  LPCTSTR lpName
+	);
+
+	LPVOID WINAPI MapViewOfFile(
+	  __in  HANDLE hFileMappingObject,
+	  __in  DWORD dwDesiredAccess,
+	  __in  DWORD dwFileOffsetHigh,
+	  __in  DWORD dwFileOffsetLow,
+	  __in  SIZE_T dwNumberOfBytesToMap
+	);
+
+*/
+
+	int arg_count=0;
+	int ret_val = 0xb16b00b5;
+
+	char* func = hook->hook.win->fnname;
+
+	if(strcmp(func, "CreateFileMappingA") ==0) arg_count = 6;
+	if(strcmp(func, "MapViewOfFile") == 0) arg_count = 5;
+	if(strcmp(func, "GetFileSize") == 0) arg_count = 2;
+
+	if(arg_count==0){
+		printf("invalid use of generic stub no match found for %s",func);
+		exit(0);
+	}
+
+	int r_esp = cpu->reg[esp];
+	r_esp -= arg_count*4;
+	
+	cpu->reg[esp] = r_esp;
+
+	printf("%x\t%s()\n", eip_save, func );
+	
+	emu_cpu_reg32_set(c, eax, ret_val);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+
+int32_t	new_user_hook_CreateProcessInternalA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	DWORD WINAPI CreateProcessInternal(  
+		__in         DWORD unknown1,                              // always (?) NULL  
+		__in_opt     LPCTSTR lpApplicationName,  
+		__inout_opt  LPTSTR lpCommandLine,  
+		__in_opt     LPSECURITY_ATTRIBUTES lpProcessAttributes,  
+		__in_opt     LPSECURITY_ATTRIBUTES lpThreadAttributes,  
+		__in         BOOL bInheritHandles,  
+		__in         DWORD dwCreationFlags,  
+		__in_opt     LPVOID lpEnvironment,  
+		__in_opt     LPCTSTR lpCurrentDirectory,  
+		__in         LPSTARTUPINFO lpStartupInfo,  
+		__out        LPPROCESS_INFORMATION lpProcessInformation,  
+		__in         DWORD unknown2                               // always (?) NULL
+	);
+*/
+	uint32_t stack_addr = cpu->reg[esp]; 
+	uint32_t p_cmdline =0;
+
+	emu_memory_read_dword(mem,stack_addr+8, &p_cmdline);
+
+	if(p_cmdline == 0) emu_memory_read_dword(mem,stack_addr+4, &p_cmdline);
+
+	stack_addr -= 12*4;
+	cpu->reg[esp] = stack_addr;
+
+	if(p_cmdline !=0){
+		struct emu_string *s_text = emu_string_new();
+		emu_memory_read_string(mem, p_cmdline, s_text, 255);
+		printf("%x\tCreateProcessInternalA( %s )\n",eip_save,  emu_string_char(s_text) );
+		emu_string_free(s_text);
+	}else{
+		printf("%x\tCreateProcessInternalA()\n",eip_save);
+	}
+
+	emu_cpu_reg32_set(c, eax, 0);
+	emu_cpu_eip_set(c, eip_save);
+	return 1;
+}
+
+
+
+
+
+
+
+
 

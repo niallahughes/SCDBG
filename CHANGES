@@ -4,11 +4,12 @@
 	dll changes
 		- added support for shell32.dll
 		- added support for user32.dll
+		- emu_disasm_addr now uses offset
 	sctest
-		- added hooks for GetModuleHandleA, user32.MessageBoxA, 
-		                  shell32.ShellExecuteA, SHGetSpecialFolderPathA
-	git repository
-	    - added sc_tests folder w/ shellcode to test salc, MessageBoxA, and ShellExecuteA
+		- added hooks for GetModuleHandleA, user32.MessageBoxA, GetFileSize,
+		                  shell32.ShellExecuteA, shell32.SHGetSpecialFolderPathA, 
+		                  CreateFileMappingA, CreateProcessInternalA, MapViewOfFile
+		- implemented a generic hook handler
 
 1.22.11 -dzzie
    cloned from current libemu git

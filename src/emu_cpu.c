@@ -954,7 +954,7 @@ uint32_t emu_disasm_addr(struct emu_cpu *c, uint32_t eip, char *str)
 	memset(str+strlen(str), 0x20, 81-strlen(str));
 
 	// step 3: print it
-	get_instruction_string(&inst, FORMAT_INTEL, 0, str+32, 31);
+	get_instruction_string(&inst, FORMAT_INTEL, eip, str+32, 31);
 
 	return instrsize;
 }
