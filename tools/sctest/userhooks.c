@@ -101,6 +101,7 @@
 extern int CODE_OFFSET;
 extern void hexdump(unsigned char*, int);
 extern struct emu_memory *mem;
+extern struct emu_cpu *cpu;    //these two are global in main code
 
 //by the time our user call is called, the args have already been popped off the stack.
 //in r/t that just means that esp has been adjusted and cleaned up for function to 
@@ -202,6 +203,43 @@ void append(struct emu_string *to, const char *dir, char *data, int size)
 	emu_string_free(sanestr);
 }
 
+void GetSHFolderName(int id, char* buf255){
+	
+	switch(id){
+		case 0:      strcpy(buf255, "C:\\%DESKTOP%"); break;
+		case 1:      strcpy(buf255, "C:\\%INTERNET%");break;
+		case 2:      strcpy(buf255, "C:\\%PROGRAMS%");break;
+		case 3:      strcpy(buf255, "C:\\%CONTROLS%");break;
+		case 4:      strcpy(buf255, "C:\\%PRINTERS%");break;
+		case 5:      strcpy(buf255, "C:\\%PERSONAL%");break;
+		case 6:      strcpy(buf255, "C:\\%FAVORITES%");break;
+		case 7:      strcpy(buf255, "C:\\%STARTUP%");break;
+		case 8:      strcpy(buf255, "C:\\%RECENT%");break;
+		case 9:      strcpy(buf255, "C:\\%SENDTO%");break;
+		case 0xA:    strcpy(buf255, "C:\\%BITBUCKET%");break;
+		case 0xB:    strcpy(buf255, "C:\\%STARTMENU%");break;
+		case 0x0010: strcpy(buf255, "C:\\%DESKTOPDIRECTORY%");break;
+		case 0x0011: strcpy(buf255, "C:\\%DRIVES%"); break;
+		case 0x0012: strcpy(buf255, "C:\\%NETWORK%"); break;
+		case 0x0013: strcpy(buf255, "C:\\%NETHOOD%");break;
+		case 0x0014: strcpy(buf255, "C:\\%FONTS%");break;
+		case 0x0015: strcpy(buf255, "C:\\%TEMPLATES%");break;
+		case 0x0016: strcpy(buf255, "C:\\%COMMON_STARTMENU%");break;
+		case 0x0017: strcpy(buf255, "C:\\%COMMON_PROGRAMS%");break;
+		case 0x0018: strcpy(buf255, "C:\\%COMMON_STARTUP%");break;
+		case 0x0019: strcpy(buf255, "C:\\%COMMON_DESKTOPDIRECTORY%");break;
+		case 0x001a: strcpy(buf255, "C:\\%APPDATA%");break;
+		case 0x001b: strcpy(buf255, "C:\\%PRINTHOOD%");break;
+		case 0x001d: strcpy(buf255, "C:\\%ALTSTARTUP%");break;
+		case 0x001e: strcpy(buf255, "C:\\%COMMON_ALTSTARTUP%");break;
+		case 0x001f: strcpy(buf255, "C:\\%COMMON_FAVORITES%");break;
+		case 0x0020: strcpy(buf255, "C:\\%INTERNET_CACHE%");break;
+		case 0x0021: strcpy(buf255, "C:\\%COOKIES%");break;
+		case 0x0022: strcpy(buf255, "C:\\%HISTORY%");break;
+		default: sprintf(buf255,"Unknown CSIDL: %x",id);
+	}
+
+}
 
 
 // ------------------------ HOOKS BELOW HERE -------------------------------
@@ -915,6 +953,7 @@ lpLibName
 	char* lib = va_arg(vl, char *); 
 	va_end(vl);
 
+	//printf("%x\tLoadLibrary(%s) = %x\n",retaddr,lib, emu_cpu_reg32_get(cpu,eax));
 	printf("%x\tLoadLibrary(%s)\n",retaddr,lib);
 
 	return 0;
@@ -1236,4 +1275,199 @@ int32_t	new_user_hook_closesocket(struct emu_env *env, struct emu_env_hook *hook
 	return 0;
 }
 */
+
+int32_t	new_user_hook_GetModuleHandleA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+ 
+	//HMODULE WINAPI GetModuleHandle( __in_opt  LPCTSTR lpModuleName);
+
+	uint32_t filename;
+	POP_DWORD(c, &filename);
+
+	struct emu_memory *mem = emu_memory_get(env->emu);
+	struct emu_string *s_filename = emu_string_new();
+	emu_memory_read_string(mem, filename, s_filename, 256);
+
+	char *dllname = emu_string_char(s_filename);
+
+
+	int i=0;
+	int found_dll = 0;
+	for (i=0; env->env.win->loaded_dlls[i] != NULL; i++)
+	{
+		if (strncasecmp(env->env.win->loaded_dlls[i]->dllname, dllname, strlen(env->env.win->loaded_dlls[i]->dllname)) == 0)
+		{
+			//logDebug(env->emu, "found dll %s, baseaddr is %08x \n",env->env.win->loaded_dlls[i]->dllname,env->env.win->loaded_dlls[i]->baseaddr);
+			emu_cpu_reg32_set(c, eax, env->env.win->loaded_dlls[i]->baseaddr);
+			found_dll = 1;
+			break;
+		}
+	}
+	
+	if (found_dll == 0)
+	{
+        if (emu_env_w32_load_dll(env->env.win, dllname) == 0)
+        {
+            emu_cpu_reg32_set(c, eax, env->env.win->loaded_dlls[i]->baseaddr);
+			found_dll = 1;
+        }
+        else
+        {
+            //logDebug(env->emu, "error could not find %s\n", dllname);
+            emu_cpu_reg32_set(c, eax, 0x0);
+        }
+	}
+
+	//printf("%x\tGetModuleHandleA(%s) = %x\n",eip_save,  dllname, emu_cpu_reg32_get(c,eax) );
+	printf("%x\tGetModuleHandleA(%s)\n",eip_save,  dllname);
+
+	emu_string_free(s_filename);
+
+	emu_cpu_reg32_set(c, eax, 0);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_MessageBoxA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+int WINAPI MessageBox(
+  __in_opt  HWND hWnd,
+  __in_opt  LPCTSTR lpText,
+  __in_opt  LPCTSTR lpCaption,
+  __in      UINT uType
+);
+*/
+	uint32_t hwnd;
+	POP_DWORD(c, &hwnd);
+
+	uint32_t p_text;
+	POP_DWORD(c, &p_text);
+
+	uint32_t p_caption;
+	POP_DWORD(c, &p_caption);
+
+	uint32_t utype;
+	POP_DWORD(c, &utype);
+
+	struct emu_memory *mem = emu_memory_get(env->emu);
+	struct emu_string *s_text = emu_string_new();
+	emu_memory_read_string(mem, p_text, s_text, 256);
+
+	char *stext = emu_string_char(s_text);
+	printf("%x\tMessageBoxA(%s)\n",eip_save,  stext );
+	
+	emu_string_free(s_text);
+
+	emu_cpu_reg32_set(c, eax, 0);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_ShellExecuteA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+HINSTANCE ShellExecute(
+  __in_opt  HWND hwnd,
+  __in_opt  LPCTSTR lpOperation,
+  __in      LPCTSTR lpFile,
+  __in_opt  LPCTSTR lpParameters,
+  __in_opt  LPCTSTR lpDirectory,
+  __in      INT nShowCmd
+);
+
+*/
+	uint32_t hwnd;
+	POP_DWORD(c, &hwnd);
+
+	uint32_t lpOperation;
+	POP_DWORD(c, &lpOperation);
+
+	uint32_t p_file;
+	POP_DWORD(c, &p_file);
+
+	uint32_t lpParameters;
+	POP_DWORD(c, &lpParameters);
+
+	uint32_t lpDirectory;
+	POP_DWORD(c, &lpDirectory);
+
+	uint32_t nShowCmd;
+	POP_DWORD(c, &nShowCmd);
+
+	struct emu_string *s_text = emu_string_new();
+	emu_memory_read_string(mem, p_file, s_text, 500);
+
+	char *stext = emu_string_char(s_text);
+	printf("%x\tShellExecuteA(%s)\n",eip_save,  stext );
+	
+	emu_string_free(s_text);
+
+	emu_cpu_reg32_set(c, eax, 33);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_SHGetSpecialFolderPathA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+CopyBOOL SHGetSpecialFolderPath(
+         HWND hwndOwner,
+  __out  LPTSTR lpszPath,
+  __in   int csidl,
+  __in   BOOL fCreate
+);
+
+*/
+	uint32_t hwnd;
+	POP_DWORD(c, &hwnd);
+
+	uint32_t buf;
+	POP_DWORD(c, &buf);
+
+	uint32_t csidl;
+	POP_DWORD(c, &csidl);
+
+	uint32_t fCreate;
+	POP_DWORD(c, &fCreate);
+
+	char buf255[255];
+	memset(buf255,0,255);
+	GetSHFolderName(csidl, (char*)&buf255);
+
+	printf("%x\tSHGetSpecialFolderPathA(buf=%x, %s)\n",eip_save, buf, buf255 );
+	
+	emu_memory_write_block(mem,buf,buf255,strlen(buf255));
+
+	emu_cpu_reg32_set(c, eax, 0);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
 

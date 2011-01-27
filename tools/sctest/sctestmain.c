@@ -237,8 +237,7 @@ void deref_regs(void){
 
 	int i=0;
 	int output_addr = 0;
-	
-	//nl();
+
 	for(i=0;i<8;i++){
 		char *ref = lookup_address(cpu->reg[i]);
 		if(strlen(ref) > 0){
@@ -246,7 +245,8 @@ void deref_regs(void){
 			if(output_addr++==3) nl();
 		}
 	}
-	//nl();
+	if(output_addr==0) printf("No known values found...");
+	nl();
 }
 
 void hexdump(unsigned char* str, int len){
@@ -336,7 +336,7 @@ void show_seh(void){
 	emu_memory_read_dword( mem, FS_SEGMENT_DEFAULT_OFFSET, &seh);
 	emu_memory_read_dword( mem, seh+4, &seh_handler);
 
-	printf("Pointer to next SEH record = %08x\nSE handler: %08x\n", seh,seh_handler);
+	printf("\tPointer to next SEH record = %08x\n\tSE handler: %08x\n", seh,seh_handler);
 
 }
 
@@ -380,10 +380,10 @@ int read_string(char* prompt, char* buf){
 	int nBytes = 20;
 	int i=0;
 
-	printf("%s: ", prompt);
+	printf("%s", prompt);
 	getline(&buf, &nBytes, stdin);
 	i = strlen(buf);
-	buf[i-1] = 0;
+	if(i>0) buf[i-1] = 0; //strip new line
 	nl();
 	return i-1;
 }
@@ -449,9 +449,9 @@ void show_debugshell_help(void){
 			"\tx - execute x steps (use with reset step count)\n"
 			"\tt - set time delay (ms) for verbosity level 1/2\n"
 			"\tk - show stack\n"
-			"\t0 - shows current value at fs[0]\n"
 			"\ti - break at instruction\n"
 			"\tf - dereF registers (show any api addresses in regs)\n"
+			"\t.seh - shows current value at fs[0]\n"
 			"\tq - quit\n\n"
 		  );
 }
@@ -478,17 +478,23 @@ void interactive_command(struct emu *e){
 		printf("dbg> ");
 
 		char c = getchar();
-		nl();
+		//if(c!='.') nl();
 
 		if(c=='q'){ opts.steps =0; break; }
 		if(c=='s' || c=='g' || c== 0x0A) break;
 		if(c=='?' || c=='h') show_debugshell_help();
 		if(c=='f') deref_regs();
-		if(c=='0'){ nl(); show_seh(); nl();}
 		if(c=='k'){ nl(); show_stack(); nl();}
 		if(c=='c'){ opts.cur_step = 0; printf("Step counter has been zeroed\n"); }
 		if(c=='t') opts.time_delay = read_int("Enter time delay (1000ms = 1sec)", tmp);
 		if(c=='r'){ opts.exec_till_ret = true; printf("Exec till ret set. Set verbosity < 3 and step.\n"); }
+
+		if(c=='.'){
+			i = read_string("",tmp);
+			if(i>0){
+				if(strcmp(tmp,"seh")==0) show_seh();
+			}
+		}
 
 		if(c=='i'){
 			i = read_string("Enter the disasm instruction you want to break at:", tmp);
@@ -670,6 +676,16 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	//new export added 1-23-11 to allow for hooking of calls not implemented in dll	
 	//emu_env_w32_export_new_hook(env, "closesocket", new_user_hook_closesocket, NULL);
 
+	//1-26-11 dz
+	emu_env_w32_export_new_hook(env, "GetModuleHandleA", new_user_hook_GetModuleHandleA, NULL);
+	
+	emu_env_w32_load_dll(env->env.win,"user32.dll");
+	emu_env_w32_export_new_hook(env, "MessageBoxA", new_user_hook_MessageBoxA, NULL);
+
+
+	emu_env_w32_load_dll(env->env.win,"shell32.dll");
+	emu_env_w32_export_new_hook(env, "ShellExecuteA", new_user_hook_ShellExecuteA, NULL);
+	emu_env_w32_export_new_hook(env, "SHGetSpecialFolderPathA", new_user_hook_SHGetSpecialFolderPathA, NULL);
 
 
     //-----------------------
@@ -696,6 +712,8 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_linux_syscall_hook(env, "exit", user_hook_exit, NULL);
 	emu_env_linux_syscall_hook(env, "socket", user_hook_socket, NULL);
 
+	
+	
 }
 
 

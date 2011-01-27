@@ -1,5 +1,15 @@
 		Changelog for libemu
 
+1.26.11 -dzzie
+	dll changes
+		- added support for shell32.dll
+		- added support for user32.dll
+	sctest
+		- added hooks for GetModuleHandleA, user32.MessageBoxA, 
+		                  shell32.ShellExecuteA, SHGetSpecialFolderPathA
+	git repository
+	    - added sc_tests folder w/ shellcode to test salc, MessageBoxA, and ShellExecuteA
+
 1.22.11 -dzzie
    cloned from current libemu git
    dll changes 
