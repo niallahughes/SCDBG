@@ -1,5 +1,16 @@
 		Changelog for libemu
 
+1.28.11
+	re-exposed getpc mode with /findsc option
+	added hook for GlobalAlloc
+	added .savemem command in debug shell
+	added .lp lookup command in debug shell
+	changed partial lookup_address fulllookupaddress
+	updated lookup to search all api not just subset (used in stack dump, deref regs, dump dwords, and .lp)
+	implemented nanny on _lcreate series hooks, tested interactive mode w *create
+	added support for hexdump mode in all appropirate hooks
+	misc cleanups
+	
 1.26.11 -dzzie
 	dll changes
 		- added support for shell32.dll
@@ -9,7 +20,7 @@
 		- added hooks for GetModuleHandleA, user32.MessageBoxA, GetFileSize,
 		                  shell32.ShellExecuteA, shell32.SHGetSpecialFolderPathA, 
 		                  CreateFileMappingA, CreateProcessInternalA, MapViewOfFile
-		- implemented a generic hook handler
+		- implemented a generic hook handler (multiple fx in one stub)
 
 1.22.11 -dzzie
    cloned from current libemu git

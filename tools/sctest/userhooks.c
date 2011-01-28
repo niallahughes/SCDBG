@@ -150,6 +150,24 @@ unsigned int get_client_port(struct sockaddr *clientInformation)
 	return 0;
 }
 
+void cygwin_safe_path(char* fpath){ //modifies parent string use after logging..
+	
+	if(fpath==NULL)return;
+
+	int i=0;
+	int sz = strlen(fpath);
+	for(i=0;i<sz;i++){
+		if( fpath[i] == '\\') fpath[i] = '_';
+		if( fpath[i] == '<') fpath[i] = '.';
+		if( fpath[i] == '>') fpath[i] = '.';
+		if( fpath[i] == ':') fpath[i] = '.';
+		if( fpath[i] == '"') fpath[i] = '.';
+		if( fpath[i] == '|') fpath[i] = '.';
+		if( fpath[i] == '?') fpath[i] = '.';
+		if( fpath[i] == '*') fpath[i] = '.';
+	}
+}
+
 void append(struct emu_string *to, const char *dir, char *data, int size)
 {
 	char *saveptr = data;
@@ -206,36 +224,36 @@ void append(struct emu_string *to, const char *dir, char *data, int size)
 void GetSHFolderName(int id, char* buf255){
 	
 	switch(id){
-		case 0:      strcpy(buf255, "C:\\%DESKTOP%"); break;
-		case 1:      strcpy(buf255, "C:\\%INTERNET%");break;
-		case 2:      strcpy(buf255, "C:\\%PROGRAMS%");break;
-		case 3:      strcpy(buf255, "C:\\%CONTROLS%");break;
-		case 4:      strcpy(buf255, "C:\\%PRINTERS%");break;
-		case 5:      strcpy(buf255, "C:\\%PERSONAL%");break;
-		case 6:      strcpy(buf255, "C:\\%FAVORITES%");break;
-		case 7:      strcpy(buf255, "C:\\%STARTUP%");break;
-		case 8:      strcpy(buf255, "C:\\%RECENT%");break;
-		case 9:      strcpy(buf255, "C:\\%SENDTO%");break;
-		case 0xA:    strcpy(buf255, "C:\\%BITBUCKET%");break;
-		case 0xB:    strcpy(buf255, "C:\\%STARTMENU%");break;
-		case 0x0010: strcpy(buf255, "C:\\%DESKTOPDIRECTORY%");break;
-		case 0x0011: strcpy(buf255, "C:\\%DRIVES%"); break;
-		case 0x0012: strcpy(buf255, "C:\\%NETWORK%"); break;
-		case 0x0013: strcpy(buf255, "C:\\%NETHOOD%");break;
-		case 0x0014: strcpy(buf255, "C:\\%FONTS%");break;
-		case 0x0015: strcpy(buf255, "C:\\%TEMPLATES%");break;
-		case 0x0016: strcpy(buf255, "C:\\%COMMON_STARTMENU%");break;
-		case 0x0017: strcpy(buf255, "C:\\%COMMON_PROGRAMS%");break;
-		case 0x0018: strcpy(buf255, "C:\\%COMMON_STARTUP%");break;
-		case 0x0019: strcpy(buf255, "C:\\%COMMON_DESKTOPDIRECTORY%");break;
-		case 0x001a: strcpy(buf255, "C:\\%APPDATA%");break;
-		case 0x001b: strcpy(buf255, "C:\\%PRINTHOOD%");break;
-		case 0x001d: strcpy(buf255, "C:\\%ALTSTARTUP%");break;
-		case 0x001e: strcpy(buf255, "C:\\%COMMON_ALTSTARTUP%");break;
-		case 0x001f: strcpy(buf255, "C:\\%COMMON_FAVORITES%");break;
-		case 0x0020: strcpy(buf255, "C:\\%INTERNET_CACHE%");break;
-		case 0x0021: strcpy(buf255, "C:\\%COOKIES%");break;
-		case 0x0022: strcpy(buf255, "C:\\%HISTORY%");break;
+		case 0:      strcpy(buf255, "./DESKTOP"); break;
+		case 1:      strcpy(buf255, "./INTERNET");break;
+		case 2:      strcpy(buf255, "./PROGRAMS");break;
+		case 3:      strcpy(buf255, "./CONTROLS");break;
+		case 4:      strcpy(buf255, "./PRINTERS");break;
+		case 5:      strcpy(buf255, "./PERSONAL");break;
+		case 6:      strcpy(buf255, "./FAVORITES");break;
+		case 7:      strcpy(buf255, "./STARTUP");break;
+		case 8:      strcpy(buf255, "./RECENT");break;
+		case 9:      strcpy(buf255, "./SENDTO");break;
+		case 0xA:    strcpy(buf255, "./BITBUCKET");break;
+		case 0xB:    strcpy(buf255, "./STARTMENU");break;
+		case 0x0010: strcpy(buf255, "./DESKTOPDIRECTORY");break;
+		case 0x0011: strcpy(buf255, "./DRIVES"); break;
+		case 0x0012: strcpy(buf255, "./NETWORK"); break;
+		case 0x0013: strcpy(buf255, "./NETHOOD");break;
+		case 0x0014: strcpy(buf255, "./FONTS");break;
+		case 0x0015: strcpy(buf255, "./TEMPLATES");break;
+		case 0x0016: strcpy(buf255, "./COMMON_STARTMENU");break;
+		case 0x0017: strcpy(buf255, "./COMMON_PROGRAMS");break;
+		case 0x0018: strcpy(buf255, "./COMMON_STARTUP");break;
+		case 0x0019: strcpy(buf255, "./COMMON_DESKTOPDIRECTORY");break;
+		case 0x001a: strcpy(buf255, "./APPDATA");break;
+		case 0x001b: strcpy(buf255, "./PRINTHOOD");break;
+		case 0x001d: strcpy(buf255, "./ALTSTARTUP");break;
+		case 0x001e: strcpy(buf255, "./COMMON_ALTSTARTUP");break;
+		case 0x001f: strcpy(buf255, "./COMMON_FAVORITES");break;
+		case 0x0020: strcpy(buf255, "./INTERNET_CACHE");break;
+		case 0x0021: strcpy(buf255, "./COOKIES");break;
+		case 0x0022: strcpy(buf255, "./HISTORY");break;
 		default: sprintf(buf255,"Unknown CSIDL: %x",id);
 	}
 
@@ -277,11 +295,7 @@ uint32_t user_hook_ExitThread(struct emu_env *env, struct emu_env_hook *hook, ..
 
 	uint32_t retaddr = get_ret(env, -8);
 
-/*
-VOID ExitThread(
-  DWORD dwExitCode
-);
-*/
+	/* VOID ExitThread( DWORD dwExitCode ); */
 
 	va_list vl;
 	va_start(vl, hook);
@@ -420,7 +434,7 @@ uint32_t user_hook_bind(struct emu_env *env, struct emu_env_hook *hook, ...)
 		struct sockaddr_in *si = (struct sockaddr_in *)addr;;
 		si->sin_port = htons(opts.override.bind.port);
 	}
-*/
+	*/
 	va_end(vl);
 
 	printf("%x\tbind(port: %d )\n",retaddr, get_client_port(addr) );
@@ -492,7 +506,7 @@ uint32_t user_hook_fclose(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
 	//printf("Hook me Captain Cook!\n");
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
-//int fclose(FILE *fp);
+	//int fclose(FILE *fp);
 
 	uint32_t retaddr = get_ret(env,-8);
 
@@ -526,27 +540,31 @@ uint32_t user_hook_fopen(struct emu_env *env, struct emu_env_hook *hook, ...)
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	char *localfile;
-	uint32_t retaddr = get_ret(env,-12);
+	uint32_t retaddr = get_ret(env,-16);
 
 	va_list vl;
 	va_start(vl, hook);
 	char *filename			= va_arg(vl,  char *);
-	/*char *mode 				= */(void)va_arg(vl,  char *);
+	char *mode 				= va_arg(vl,  char *);
 	va_end(vl);
 
 	if( opts.interactive_hooks == 0){
-		printf("%x\tfopen(%s) = %x\n", retaddr, filename, 0x4711);
+		printf("%x\tfopen(%s, %s) = %x\n", retaddr, filename, mode, 0x4711);
 		return 0x4711;
 	}
 
-	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",filename) == -1) return -1;
+	char* tmp_file = strdup(filename);
+
+	cygwin_safe_path(tmp_file);
+	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",tmp_file) == -1) return -1;
+	free(tmp_file);
 
 	int fd = mkstemp(localfile);
 	close(fd);
 
 	FILE *f = fopen(localfile,"w");
-	
 	printf("%x\tfopen(%s) = %x\n", retaddr, filename, (int)f);
+	printf("\tInteractive mode local file: %s\n", localfile);
 
 	uint32_t file;
 	nanny_add_file(hook->hook.win->userdata, localfile, &file, f);
@@ -559,21 +577,30 @@ uint32_t user_hook_fwrite(struct emu_env *env, struct emu_env_hook *hook, ...)
 	//printf("Hook me Captain Cook!\n");
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
-	uint32_t retaddr = get_ret(env,-20);
+	uint32_t retaddr = get_ret(env,-24);
+	uint32_t real_buf = get_ret(env,-4);
 
-/*       size_t fwrite(const void *ptr, size_t size, size_t nmemb,
-                     FILE *stream);
-*/
+/*       size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);  */
+
 	va_list vl;
 	va_start(vl, hook);
-	void *data = va_arg(vl, void *);
+	void *data = va_arg(vl, void *);   //libemu buffer address 
 	size_t size = va_arg(vl, size_t);
 	size_t nmemb = va_arg(vl, size_t);
 	FILE *f = va_arg(vl, FILE *);
 	va_end(vl);
 	
-	printf("%x\tfwrite(h=%x, sz=%x, buf=%x)\n", retaddr, (int)f, size, (int)data);
+	printf("%x\tfwrite(h=%x, sz=%x, buf=%x)\n", retaddr, (int)f, size*nmemb, real_buf);
 	
+	if(opts.show_hexdumps && data != 0 && size > 0 && nmemb > 0){
+		int display_size = size*nmemb;
+		if(display_size > 300){ 
+			printf("Showing first 300 bytes...\n");
+			display_size = 300;
+		}
+		hexdump(data, display_size );
+	}
+
 	if(opts.interactive_hooks == 0 ) return size*nmemb;
 
 	struct nanny_file *nf = nanny_get_file(hook->hook.win->userdata, (uint32_t)(uintptr_t)f);
@@ -660,6 +687,10 @@ uint32_t user_hook_send(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 	printf("%x\tsend(h=%x, buf=%x, len=%x)\n",retaddr, s, (int)buf, len);
 
+	if(opts.show_hexdumps && len > 0 && buf > 0){
+		hexdump(buf,len);
+	}
+
 	if(opts.interactive_hooks == 0 ) return len; //success
 
 	return send(s, buf, len,  flags);
@@ -720,7 +751,7 @@ uint32_t user_hook_CreateFile(struct emu_env *env, struct emu_env_hook *hook, ..
 	//printf("Hook me Captain Cook!\n");
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
-	uint32_t retaddr = get_ret(env, -1*((7*4)+4));
+	uint32_t retaddr = get_ret(env, -32);
 
 /*
 HANDLE CreateFile(
@@ -750,12 +781,17 @@ HANDLE CreateFile(
 
 	if(opts.interactive_hooks == 0 ) return 0x4444;
 
-	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",lpFileName) == -1) return -1; //exit(-1);
+	char* tmp_file = strdup(lpFileName);
+	cygwin_safe_path(tmp_file);
+	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",tmp_file) == -1) return -1; //exit(-1);
+	free(tmp_file);
 
 	int fd = mkstemp(localfile);
 	close(fd);
 
 	FILE *f = fopen(localfile,"w");
+
+	printf("\tInteractive mode local file: %s\n", localfile);
 
 	uint32_t handle;
 	nanny_add_file(hook->hook.win->userdata, localfile, &handle, f);
@@ -791,6 +827,15 @@ BOOL WriteFile(
 	va_end(vl);
 
 	printf("%x\tWriteFile(h=%x, buf=%x)\n",retaddr,(int)hFile,(int)lpBuffer);
+
+	if(opts.show_hexdumps && nNumberOfBytesToWrite > 0){
+		int display_size = nNumberOfBytesToWrite;
+		if(display_size > 500){
+			printf("Showing first 500 bytes...\n");
+			display_size = 500;
+		}
+		hexdump(lpBuffer, display_size);
+	}
 
 	if(opts.interactive_hooks == 0 ) return 1; //success
 
@@ -914,9 +959,9 @@ UINT GetSystemDirectory(
   UINT uSize
 );
 */
-
-	printf("%x\tGetSystemDirectoryA(c:\\windows\\system32\\)\n",retaddr);
-
+	//buffer filled in by dll hook
+	printf("%x\tGetSystemDirectoryA( c:\\windows\\system32\\ )\n",retaddr);
+ 
 	return 0;
 
 }
@@ -981,8 +1026,24 @@ LONG _lcreat(
 	va_end(vl);
 
 	printf("%x\t_lcreate(%s)\n",retaddr,fname);
+	
+	if(opts.interactive_hooks == 0) return 1;
 
-	return 0;
+	char *localfile;
+	cygwin_safe_path(fname);
+	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",fname) == -1) return -1; //exit(-1);
+
+	int fd = mkstemp(localfile);
+	close(fd);
+
+	FILE *f = fopen(localfile,"w");
+
+	printf("\tInteractive mode local file: %s\n", localfile);
+
+	uint32_t handle;
+	nanny_add_file(hook->hook.win->userdata, localfile, &handle, f);
+
+	return (uint32_t)handle;
 
 }
 
@@ -1001,17 +1062,27 @@ LONG _lwrite(
   UINT cbWrite
 );
 */
+	uint32_t real_buf = get_ret(env,-8);
 
 	va_list vl;
 	va_start(vl, hook);
 	int hFile    = va_arg(vl,  int);
-	int lpBuffer = va_arg(vl,  int);
-	/*int cbWrite  =*/ va_arg(vl,  int);
+	int lpBuffer = va_arg(vl,  int); //this is the libemu buffer not real address...
+	int cbWrite  = va_arg(vl,  int);
 	va_end(vl);
 
-	printf("%x\t_lwrite(h=%x, buf=%x)\n",retaddr, hFile, lpBuffer);
+	printf("%x\t_lwrite(h=%x, buf=%x)\n",retaddr, hFile, real_buf);
 
-	return 0;
+	if(opts.show_hexdumps && lpBuffer != 0 && cbWrite > 0) hexdump((char*)lpBuffer, cbWrite);
+
+	if(opts.interactive_hooks == 0 ) return cbWrite;
+
+	struct nanny_file *nf = nanny_get_file(hook->hook.win->userdata, (uint32_t)(uintptr_t)hFile);
+
+	if (nf != NULL)
+		return fwrite((void*)lpBuffer, 1, cbWrite, nf->real_file);
+	else 
+		return cbWrite;
 
 }
 
@@ -1023,11 +1094,6 @@ uint32_t user_hook__lclose(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 	uint32_t retaddr =  get_ret(env,-8);
 
-/*
-prototype
-);
-*/
-
 	va_list vl;
 	va_start(vl, hook);
 	int hFile  =  va_arg(vl,  int); 
@@ -1035,7 +1101,18 @@ prototype
 
 	printf("%x\t_lclose(h=%x)\n",retaddr,hFile);
 
-	return 0;
+	if( opts.interactive_hooks == 0 )  return 0;
+
+	struct nanny_file *nf = nanny_get_file(hook->hook.win->userdata, (uint32_t)(uintptr_t)hFile);
+
+	if (nf != NULL)
+	{
+		FILE *ef = nf->real_file;
+		nanny_del_file(hook->hook.win->userdata, (uint32_t)(uintptr_t)hFile);
+    	return fclose(ef);
+	}
+	else 
+		return 0;
 
 }
 
@@ -1245,6 +1322,7 @@ uint32_t user_hook_VirtualProtect(struct emu_env *env, struct emu_env_hook *hook
 	int32_t addr = va_arg(vl, int32_t);
 	int32_t size = va_arg(vl, int32_t);
 	int32_t protect = va_arg(vl, int32_t);
+	va_arg(vl, int32_t); //old protect
 	va_end(vl);
 
 	printf("%x\tVirtualProtect(adr=%x, sz=%x, flags=%x)\n",retaddr, addr, size ,protect);
@@ -1290,7 +1368,7 @@ int32_t	new_user_hook_GetModuleHandleA(struct emu_env *env, struct emu_env_hook 
 			break;
 		}
 	}
-	
+	 
 	if (found_dll == 0)
 	{
         if (emu_env_w32_load_dll(env->env.win, dllname) == 0)
@@ -1397,7 +1475,7 @@ HINSTANCE ShellExecute(
 	POP_DWORD(c, &nShowCmd);
 
 	struct emu_string *s_text = emu_string_new();
-	emu_memory_read_string(mem, p_file, s_text, 500);
+	emu_memory_read_string(mem, p_file, s_text, 254);
 
 	char *stext = emu_string_char(s_text);
 	printf("%x\tShellExecuteA(%s)\n",eip_save,  stext );
@@ -1440,7 +1518,7 @@ CopyBOOL SHGetSpecialFolderPath(
 	POP_DWORD(c, &fCreate);
 
 	char buf255[255];
-	memset(buf255,0,255);
+	memset(buf255,0,254);
 	GetSHFolderName(csidl, (char*)&buf255);
 
 	printf("%x\tSHGetSpecialFolderPathA(buf=%x, %s)\n",eip_save, buf, buf255 );
@@ -1471,24 +1549,24 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	  __in_opt  LPCTSTR lpName
 	);
 
-	LPVOID WINAPI MapViewOfFile(
-	  __in  HANDLE hFileMappingObject,
-	  __in  DWORD dwDesiredAccess,
-	  __in  DWORD dwFileOffsetHigh,
-	  __in  DWORD dwFileOffsetLow,
-	  __in  SIZE_T dwNumberOfBytesToMap
-	);
 
 */
 
 	int arg_count=0;
 	int ret_val = 0xb16b00b5;
+    int log_val = -1; //stub support optional logging of one int arg
 
 	char* func = hook->hook.win->fnname;
 
-	if(strcmp(func, "CreateFileMappingA") ==0) arg_count = 6;
-	if(strcmp(func, "MapViewOfFile") == 0) arg_count = 5;
-	if(strcmp(func, "GetFileSize") == 0) arg_count = 2;
+	if(strcmp(func, "CreateFileMappingA") ==0 ){
+		log_val = get_ret(env,-16);  //sizelow
+		arg_count = 6;
+	}
+
+	if(strcmp(func, "GetFileSize") == 0){
+		log_val = get_ret(env,0); //handle
+		arg_count = 2;
+	}
 
 	if(arg_count==0){
 		printf("invalid use of generic stub no match found for %s",func);
@@ -1500,8 +1578,12 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	
 	cpu->reg[esp] = r_esp;
 
-	printf("%x\t%s()\n", eip_save, func );
-	
+	if(log_val == -1){
+		printf("%x\t%s()\n", eip_save, func );
+	}else{
+		printf("%x\t%s(%x)\n", eip_save, func, log_val );
+	}
+
 	emu_cpu_reg32_set(c, eax, ret_val);
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
@@ -1556,6 +1638,92 @@ int32_t	new_user_hook_CreateProcessInternalA(struct emu_env *env, struct emu_env
 	emu_cpu_eip_set(c, eip_save);
 	return 1;
 }
+
+
+int32_t	new_user_hook_GlobalAlloc(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	CopyHGLOBAL WINAPI GlobalAlloc(
+	  __in  UINT uFlags,
+	  __in  SIZE_T dwBytes
+	);
+*/
+	uint32_t flags;
+	POP_DWORD(c, &flags);
+
+	uint32_t size;
+	POP_DWORD(c, &size);
+
+	uint32_t baseMemAddress = 0x666666;
+
+	if(size > 0 && size < 9000){
+		void *buf = malloc(size);
+		memset(buf,0,size);
+		emu_memory_write_block(mem,baseMemAddress,buf, size);
+		printf("%x\tGlobalAlloc(sz=%x) = %x\n", eip_save, size, baseMemAddress);
+		free(buf);
+	}else{
+		printf("%x\tGlobalAlloc(sz=%x) (Ignored size out of range)\n", eip_save, size);
+	}
+
+	emu_cpu_reg32_set(c, eax, baseMemAddress);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_MapViewOfFile(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	
+	LPVOID WINAPI MapViewOfFile(  //todo: the return value is the starting address of the mapped view.
+	  __in  HANDLE hFileMappingObject,
+	  __in  DWORD dwDesiredAccess,
+	  __in  DWORD dwFileOffsetHigh,
+	  __in  DWORD dwFileOffsetLow,
+	  __in  SIZE_T dwNumberOfBytesToMap
+	);
+*/
+	uint32_t size;
+	POP_DWORD(c, &size);
+	POP_DWORD(c, &size);
+	POP_DWORD(c, &size);
+	POP_DWORD(c, &size);
+	POP_DWORD(c, &size);
+
+	uint32_t baseMemAddress = 0x666666;
+
+	if(size==0) size = 5000; //size was specified in CreateFileMapping...so we default it...
+
+	if(size > 0 && size < 9000){
+		void *buf = malloc(size);
+		memset(buf,0,size);
+		emu_memory_write_block(mem,baseMemAddress,buf, size);
+		printf("%x\tMapViewOfFile(sz=%x) = %x\n", eip_save, size, baseMemAddress);
+		free(buf);
+	}else{
+		printf("%x\tMapViewOfFile(sz=%x) (Ignored to big)\n", eip_save, size);
+	}
+
+	emu_cpu_reg32_set(c, eax, baseMemAddress);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+
 
 
 

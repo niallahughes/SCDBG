@@ -22,6 +22,7 @@ struct run_time_options
 	int  time_delay;
 	bool show_hexdumps;
 	char* break_at_instr;
+	bool  getpc_mode;
 
 	struct 
 	{

@@ -181,6 +181,7 @@ FILE *_wfopen( const wchar_t *filename, const wchar_t *mode );
 
 	emu_cpu_reg32_set(c, eax, returnvalue);
 
+	
 	if (env->profile != NULL)
 	{
 		emu_profile_function_add(env->profile, "fopen");
@@ -191,7 +192,7 @@ FILE *_wfopen( const wchar_t *filename, const wchar_t *mode );
 		emu_profile_function_returnvalue_ptr_set(env->profile, "FILE *", returnvalue);
 		emu_profile_argument_add_none(env->profile);
 	}
-
+	
 
 
 	emu_string_free(filename);
@@ -215,23 +216,17 @@ int32_t	env_w32_hook_fwrite(struct emu_env *env, struct emu_env_hook *hook)
 /*
 size_t fwrite( const void *buffer, size_t size, size_t count, FILE *stream );
 */
-
 	uint32_t p_buffer;
 	MEM_DWORD_READ(c, c->reg[esp], &p_buffer);
 	
-
-    uint32_t size;
+	uint32_t size;
 	MEM_DWORD_READ(c, (c->reg[esp]+4), &size);
-
-
 
 	uint32_t count;
 	MEM_DWORD_READ(c, (c->reg[esp]+8), &count);
-
+	
 	unsigned char *buffer = malloc(size*count);
 	emu_memory_read_block(emu_memory_get(env->emu), p_buffer, buffer, size*count);
-
-
 
 	uint32_t p_stream;
 	MEM_DWORD_READ(c, c->reg[esp]+12, &p_stream);

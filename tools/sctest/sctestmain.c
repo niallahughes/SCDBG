@@ -27,8 +27,13 @@
 
 /*  this source has been modified from original. 
 
-	TODO: test interactive hooks
-		  implement rest of opts.show_hexdump 		  
+	TODO: test interactive hooks more (fwrite/CreateFileA need cygwin safe path call?)
+		  support unhandledexceptionfilter w/seh (implement as req)
+		  implement a symbol name to offset lookup?
+		  display bug, on breakpoint and on error disasm shown twice
+		  general option /foff to set opts.offset so you can start at specific file offset? (already supported in code)
+
+		  
 
 */
 #include "../config.h"
@@ -91,8 +96,8 @@
 
 #include "emu/emu_shellcode.h"
 
-#define FAILED "\033[31;1mfailed\033[0m"
-#define SUCCESS "\033[32;1msuccess\033[0m"
+//#define FAILED "\033[31;1mfailed\033[0m"
+//#define SUCCESS "\033[32;1msuccess\033[0m"
 
 #define F(x) (1 << (x))
 
@@ -116,8 +121,9 @@ int graph_draw(struct emu_graph *graph);
 #define FS_SEGMENT_DEFAULT_OFFSET 0x7ffdf000
 int CODE_OFFSET = 0x00401000;
 static struct termios orgt;
+int ctrl_c_count=0;
 
-//this is just easier why all the gets and passes...
+//this is just easier...only one global object anyway
 struct emu *e = 0;
 struct emu_cpu *cpu = 0;
 struct emu_memory *mem = 0;
@@ -153,49 +159,62 @@ void start_color(enum colors c){
 }
 
 void end_color(void){ printf("\033[0m"); }
-
 void nl(void){ printf("\n"); }
-
 #define FLAG(fl) (1 << (fl))
-
-void restore_terminal(int arg){ tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
+void restore_terminal(int arg)    { tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
 void atexit_restore_terminal(void){ tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
 
-void ctrl_c_handler(int arg){ opts.verbose = 3; /*break next instruction*/ }
-
-char* lookup_address(int va){
-	/*
-		.dllname = "kernel32",
-		.baseaddress = 0x7C800000,
-		.imagesize = 0x00106000,
-
-		.dllname = "ws2_32",
-		.baseaddress = 0x71A10000,
-		.imagesize = 0x00017000,
-
-		.dllname = "urlmon",
-		.baseaddress = 0x7DF20000,
-		.imagesize = 0x000A0000,
-	*/
-
-	int i =0;
-	bool ok = false;
-	if(va >= 0x7C800000 && va <= 0x7C800000 + 0x00106000) ok = true;
-	if(va >= 0x71A10000 && va <= 0x71A10000 + 0x00017000) ok = true;
-	if(va >= 0x7DF20000 && va <= 0x7DF20000 + 0x000A0000) ok = true;
-
-	if(!ok) return dll_exports[0].fnname;
-	
-	for(i=1;i<75;i++){
-		if(va == dll_exports[i].virtualaddr){
-			return dll_exports[i].fnname ;
-		}
-	}
-
-	return dll_exports[0].fnname;
+void ctrl_c_handler(int arg){ 
+	opts.verbose = 3;             //break next instruction
+	ctrl_c_count++;               //user hit ctrl c a couple times, 
+	if(ctrl_c_count > 1) exit(0); //must want out for real.. (zeroed each step)
 }
 
+int fulllookupAddress(int eip, char* buf255){
 
+	int numdlls=0;
+	strcpy(buf255," ");
+
+	while ( env->env.win->loaded_dlls[numdlls] != 0 )
+	{
+		if ( eip == env->env.win->loaded_dlls[numdlls]->baseaddr ){
+			
+			if(eip == 0x7C800000)
+				strcpy(buf255, "PEB Base Address");
+			else
+				sprintf(buf255, "%s Base Address", env->env.win->loaded_dlls[numdlls]->dllname );
+			
+			return 1;
+		}
+		else if ( eip > env->env.win->loaded_dlls[numdlls]->baseaddr && 
+			      eip < env->env.win->loaded_dlls[numdlls]->baseaddr + 
+				            env->env.win->loaded_dlls[numdlls]->imagesize )
+		{
+			
+			//printf("Address %08x is within %s\n",eip, env->env.win->loaded_dlls[numdlls]->dllname);
+
+			struct emu_env_w32_dll *dll = env->env.win->loaded_dlls[numdlls];
+
+			struct emu_hashtable_item *ehi = emu_hashtable_search(dll->exports_by_fnptr, (void *)(uintptr_t)(eip - dll->baseaddr));
+
+			if ( ehi == 0 )
+			{
+				//printf("No specific lookup found for %08x\n", eip);
+				return 0;
+			}
+
+			struct emu_env_hook *hook = (struct emu_env_hook *)ehi->value;
+			//printf("Address found: %x = %s\n", eip, hook->hook.win->fnname);
+			//printf("%s", hook->hook.win->fnname);
+			strncpy(buf255, hook->hook.win->fnname, 254);
+			return 1;
+
+		}
+		numdlls++;
+	}
+
+	return 0;
+}
 
 int file_length(FILE *f)
 {
@@ -237,10 +256,10 @@ void deref_regs(void){
 
 	int i=0;
 	int output_addr = 0;
+	char ref[255];
 
 	for(i=0;i<8;i++){
-		char *ref = lookup_address(cpu->reg[i]);
-		if(strlen(ref) > 0){
+		if( fulllookupAddress( cpu->reg[i], (char*)&ref) > 0 ){
 			printf("\t%s -> %s\n", regm[i], ref);
 			if(output_addr++==3) nl();
 		}
@@ -337,6 +356,7 @@ void show_seh(void){
 	emu_memory_read_dword( mem, seh+4, &seh_handler);
 
 	printf("\tPointer to next SEH record = %08x\n\tSE handler: %08x\n", seh,seh_handler);
+	//todo: walk chain? probably not necessary for shellcode..
 
 }
 
@@ -418,17 +438,48 @@ void show_stack(void){
 	int i=0;
 	uint32_t curesp = emu_cpu_reg32_get(cpu ,esp);
 	uint32_t mretval=0;
+	char buf[255];
 
 	for(i = -16; i<=24;i+=4){
 		emu_memory_read_dword(mem,curesp+i,&mretval);
+		fulllookupAddress(mretval, (char*)&buf);
 		if(i<0){
-			printf("[ESP - %-2x] = %08x\t%s\n", abs(i), mretval, lookup_address(mretval) );
+			printf("[ESP - %-2x] = %08x\t%s\n", abs(i), mretval, buf);
 		}else if(i==0){
-			printf("[ESP --> ] = %08x\t%s\n", mretval, lookup_address(mretval));
+			printf("[ESP --> ] = %08x\t%s\n", mretval, buf);
 		}else{
-			printf("[ESP + %-2x] = %08x\t%s\n", i, mretval, lookup_address(mretval));
+			printf("[ESP + %-2x] = %08x\t%s\n", i, mretval, buf);
 		}
 	}
+	
+}
+
+void savemem(void){
+	FILE *fp;
+	char fname[255];
+	char tmp[255];
+
+	int base = read_hex("Enter base address to dump", (char*)&tmp);
+	int size = read_hex("Enter size to dump", (char*)&tmp);
+
+	if(base < 1 || size < 1){
+		printf("Invalid base (%x) or size (%x)", base,size);
+		return;
+	}
+
+	void* buf = malloc(size);
+
+	if(emu_memory_read_block(mem,base,buf,size) == -1){
+		printf("Failed to read block...\n");
+	}else{
+		sprintf(fname,"memdump_0x%x-0x%x.bin", base, base+size);
+		fp = fopen(fname,"wb");
+		fwrite(buf,1,size,fp);
+		fclose(fp);
+		printf("Dump saved to %s\n", fname);
+	}
+
+	free(buf);
 	
 }
 
@@ -442,16 +493,18 @@ void show_debugshell_help(void){
 			"\tr - execute till return (v=0 recommended)\n"
 			"\tu - unassembled address\n"
 			"\tb - break at address\n"
-			"\tm - reset max step count\n"
+			"\tm - reset max step count (-1 = infinate)\n"
 			"\te - set eip\n"
 			"\tw - dWord dump,(32bit ints) prompted for hex base addr and then size\n"
 			"\td - Dump Memory (hex dump) prompted for hex base addr and then size\n"
 			"\tx - execute x steps (use with reset step count)\n"
 			"\tt - set time delay (ms) for verbosity level 1/2\n"
 			"\tk - show stack\n"
-			"\ti - break at instruction\n"
-			"\tf - dereF registers (show any api addresses in regs)\n"
+			"\ti - break at instruction (scans disasm for next string match)\n"
+			"\tf - dereF registers (show any common api addresses in regs)\n"  
+			"\t.lp - do a full lookup of an address\n"  
 			"\t.seh - shows current value at fs[0]\n"
+			"\t.savemem - saves a memdump of range specified to file\n"
 			"\tq - quit\n\n"
 		  );
 }
@@ -467,6 +520,7 @@ void interactive_command(struct emu *e){
 
 	char *buf=0;
 	char *tmp = (char*)malloc(21);
+	char lookup[255];
 	int base=0;
 	int size=0;
 	int i=0;
@@ -489,10 +543,19 @@ void interactive_command(struct emu *e){
 		if(c=='t') opts.time_delay = read_int("Enter time delay (1000ms = 1sec)", tmp);
 		if(c=='r'){ opts.exec_till_ret = true; printf("Exec till ret set. Set verbosity < 3 and step.\n"); }
 
-		if(c=='.'){
+		if(c=='.'){  //dot commands
 			i = read_string("",tmp);
 			if(i>0){
 				if(strcmp(tmp,"seh")==0) show_seh();
+				if(strcmp(tmp,"savemem")==0) savemem();
+				if(strcmp(tmp,"lp")==0){
+					base = read_hex("Enter address to do a lookup on", tmp);
+					if(base > 0){
+						if( fulllookupAddress(base, (char*)&lookup) > 0){
+							printf("\tFound: %s\n", lookup);
+						}
+					}
+				}
 			}
 		}
 
@@ -570,10 +633,11 @@ void interactive_command(struct emu *e){
 					printf("Memory read of %x failed \n", base+(i*4) );
 					break;
 				}else{
+					fulllookupAddress(bytes_read,(char*)&lookup);
 					if(rel > 0){
-						printf("[x + %-2x]\t%08x\t%s\n", (i*4), bytes_read, lookup_address(bytes_read) );
+						printf("[x + %-2x]\t%08x\t%s\n", (i*4), bytes_read, lookup );
 					}else{
-						printf("%08x\t%08x\t%s\n", base+(i*4), bytes_read, lookup_address(bytes_read) );
+						printf("%08x\t%08x\t%s\n", base+(i*4), bytes_read, lookup);
 					}
 				}
 			}
@@ -645,6 +709,11 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	   dll itself. -dzzie
 	*/
 
+	emu_env_w32_load_dll(env->env.win,"user32.dll");
+	emu_env_w32_load_dll(env->env.win,"shell32.dll");
+	emu_env_w32_load_dll(env->env.win,"msvcrt.dll");
+	emu_env_w32_load_dll(env->env.win,"urlmon.dll");
+	emu_env_w32_load_dll(env->env.win,"ws2_32.dll");
 
 	emu_env_w32_export_hook(env, "ExitProcess", user_hook_ExitProcess, NULL);
 	emu_env_w32_export_hook(env, "ExitThread", user_hook_ExitThread, NULL);
@@ -653,56 +722,9 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_hook(env, "CreateFileA", user_hook_CreateFile, na);
 	emu_env_w32_export_hook(env, "WriteFile", user_hook_WriteFile, na);
 	emu_env_w32_export_hook(env, "CloseHandle", user_hook_CloseHandle, na);
-
-	//-----------------------added by dzzie (+ support in dll also)
-	emu_env_w32_export_hook(env, "GetProcAddress", user_hook_GetProcAddress, NULL);
-	emu_env_w32_export_hook(env, "GetSystemDirectoryA", user_hook_GetSystemDirectoryA, NULL);
-	emu_env_w32_export_hook(env, "GetTickCount", user_hook_GetTickCount, NULL);
-	emu_env_w32_export_hook(env, "LoadLibraryA", user_hook_LoadLibraryA, NULL);
-	emu_env_w32_export_hook(env, "_lcreat", user_hook__lcreat, NULL);
-	emu_env_w32_export_hook(env, "_lwrite", user_hook__lwrite, NULL);
-	emu_env_w32_export_hook(env, "_lclose", user_hook__lclose, NULL);
-	emu_env_w32_export_hook(env, "malloc", user_hook_malloc, NULL);
-	emu_env_w32_export_hook(env, "memset", user_hook_memset, NULL);
-	emu_env_w32_export_hook(env, "SetUnhandledExceptionFilter", user_hook_SetUnhandledExceptionFilter, NULL);
-	emu_env_w32_export_hook(env, "WinExec", user_hook_WinExec, NULL);
-	//added when moved to latest build off github...
-	emu_env_w32_export_hook(env, "DeleteFileA", user_hook_DeleteFileA, NULL);
-	emu_env_w32_export_hook(env, "GetVersion", user_hook_GetVersion, NULL);
-	emu_env_w32_export_hook(env, "GetTempPathA", user_hook_GetTempPath, NULL);
-	emu_env_w32_export_hook(env, "Sleep", user_hook_Sleep, NULL);
-	emu_env_w32_export_hook(env, "VirtualProtect", user_hook_VirtualProtect, NULL);
-
-	//new export added 1-23-11 to allow for hooking of calls not implemented in dll	
-
-	//1-26-11 dz
-	emu_env_w32_export_new_hook(env, "GetModuleHandleA", new_user_hook_GetModuleHandleA, NULL);
-
-	//-----handled by the generic stub
-	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
-	emu_env_w32_export_new_hook(env, "CreateFileMappingA", new_user_hook_GenericStub, NULL);
-	emu_env_w32_export_new_hook(env, "MapViewOfFile", new_user_hook_GenericStub, NULL);
-	//----------------------------
-
-	emu_env_w32_export_new_hook(env, "CreateProcessInternalA", new_user_hook_CreateProcessInternalA, NULL);
-
-	emu_env_w32_load_dll(env->env.win,"user32.dll");
-	emu_env_w32_export_new_hook(env, "MessageBoxA", new_user_hook_MessageBoxA, NULL);
-
-
-	emu_env_w32_load_dll(env->env.win,"shell32.dll");
-	emu_env_w32_export_new_hook(env, "ShellExecuteA", new_user_hook_ShellExecuteA, NULL);
-	emu_env_w32_export_new_hook(env, "SHGetSpecialFolderPathA", new_user_hook_SHGetSpecialFolderPathA, NULL);
-
-
-    //-----------------------
-
-	emu_env_w32_load_dll(env->env.win,"msvcrt.dll");
 	emu_env_w32_export_hook(env, "fclose", user_hook_fclose, na);
 	emu_env_w32_export_hook(env, "fopen", user_hook_fopen, na);
 	emu_env_w32_export_hook(env, "fwrite", user_hook_fwrite, na);
-
-	emu_env_w32_load_dll(env->env.win,"ws2_32.dll");
 	emu_env_w32_export_hook(env, "accept", user_hook_accept, NULL);
 	emu_env_w32_export_hook(env, "bind", user_hook_bind, NULL);
 	emu_env_w32_export_hook(env, "closesocket", user_hook_closesocket, NULL);
@@ -712,15 +734,42 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_hook(env, "send", user_hook_send, NULL);
 	emu_env_w32_export_hook(env, "socket", user_hook_socket, NULL);
 	emu_env_w32_export_hook(env, "WSASocketA", user_hook_WSASocket, NULL);
-
-	emu_env_w32_load_dll(env->env.win,"urlmon.dll");
 	emu_env_w32_export_hook(env, "URLDownloadToFileA", user_hook_URLDownloadToFile, NULL);
-
 	emu_env_linux_syscall_hook(env, "exit", user_hook_exit, NULL);
 	emu_env_linux_syscall_hook(env, "socket", user_hook_socket, NULL);
 
-	
-	
+
+	//-----------------------added dz(+ support in dll also)
+	emu_env_w32_export_hook(env, "GetProcAddress", user_hook_GetProcAddress, NULL);
+	emu_env_w32_export_hook(env, "GetSystemDirectoryA", user_hook_GetSystemDirectoryA, NULL);
+	emu_env_w32_export_hook(env, "GetTickCount", user_hook_GetTickCount, NULL);
+	emu_env_w32_export_hook(env, "LoadLibraryA", user_hook_LoadLibraryA, NULL);
+	emu_env_w32_export_hook(env, "_lcreat", user_hook__lcreat, na);
+	emu_env_w32_export_hook(env, "_lwrite", user_hook__lwrite, na);
+	emu_env_w32_export_hook(env, "_lclose", user_hook__lclose, na);
+	emu_env_w32_export_hook(env, "malloc", user_hook_malloc, NULL);
+	emu_env_w32_export_hook(env, "memset", user_hook_memset, NULL);
+	emu_env_w32_export_hook(env, "SetUnhandledExceptionFilter", user_hook_SetUnhandledExceptionFilter, NULL);
+	emu_env_w32_export_hook(env, "WinExec", user_hook_WinExec, NULL);
+	emu_env_w32_export_hook(env, "DeleteFileA", user_hook_DeleteFileA, NULL);
+	emu_env_w32_export_hook(env, "GetVersion", user_hook_GetVersion, NULL);
+	emu_env_w32_export_hook(env, "GetTempPathA", user_hook_GetTempPath, NULL);
+	emu_env_w32_export_hook(env, "Sleep", user_hook_Sleep, NULL);
+	emu_env_w32_export_hook(env, "VirtualProtect", user_hook_VirtualProtect, NULL);
+	emu_env_w32_export_new_hook(env, "GetModuleHandleA", new_user_hook_GetModuleHandleA, NULL);
+	emu_env_w32_export_new_hook(env, "GlobalAlloc", new_user_hook_GlobalAlloc, NULL);
+	emu_env_w32_export_new_hook(env, "CreateProcessInternalA", new_user_hook_CreateProcessInternalA, NULL);
+	emu_env_w32_export_new_hook(env, "MessageBoxA", new_user_hook_MessageBoxA, NULL);
+	emu_env_w32_export_new_hook(env, "ShellExecuteA", new_user_hook_ShellExecuteA, NULL);
+	emu_env_w32_export_new_hook(env, "SHGetSpecialFolderPathA", new_user_hook_SHGetSpecialFolderPathA, NULL);
+	emu_env_w32_export_new_hook(env, "MapViewOfFile", new_user_hook_MapViewOfFile, NULL);
+
+	//-----handled by the generic stub
+	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "CreateFileMappingA", new_user_hook_GenericStub, NULL);
+
+
+
 }
 
 
@@ -738,6 +787,8 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 		- add 8 to esp and write value there to be current esp
 	
 	seems to work, done from observed tested in olly - dzzie
+
+    todo: should we also check the UnhandledExceptionFilter here if its set?
 */
 int handle_seh(struct emu *e,int last_good_eip){
 			
@@ -825,7 +876,6 @@ int run_sc(void)
 
 	for (i=0;i<8;i++) emu_cpu_reg32_set( emu_cpu_get(e), i , regs[i]);
 
-	//stacksz = regs[5] - regs[4] + 500;
 	stacksz = regs[ebp] - regs[esp] + 500;
 	stack = malloc(stacksz);
 	memset(stack, 0, stacksz);
@@ -848,14 +898,14 @@ int run_sc(void)
 	emu_memory_write_block(mem, 0x252020+0x40, uni_k32, 23 ); //embed the data
 	emu_memory_write_dword(mem, 0x252020+0x20, 0x252020+0x40); //embed the pointer
 
-	//0x7df7b0bb - some of the shellcodes look for hooks set on some API, lets add a couple
-    emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //urldownload to file
+	//some of the shellcodes look for hooks set on some API, lets add some mem so it exists to check
+    emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile
 
 	printf("Writing code to memory\n\n");	
 	emu_memory_write_block(mem, static_offset, opts.scode,  opts.size);
 
 	//printf("Setting eip\n");
-	emu_cpu_eip_set(emu_cpu_get(e), static_offset + opts.offset);  //< is this correct + ?
+	emu_cpu_eip_set(emu_cpu_get(e), static_offset + opts.offset);  //+ opts.offset for getpc mode
 
 	set_hooks(env,na);
 
@@ -867,11 +917,12 @@ int run_sc(void)
 
 //----------------------------- MAIN STEP LOOP ----------------------
 	opts.cur_step = -1;
-	//for ( opts.cur_step = 0; opts.cur_step <= opts.steps; opts.cur_step++ )
 	while(1)
 	{
+	
 		opts.cur_step++;
 		j = opts.cur_step;
+		ctrl_c_count = 0;
 
 		if(opts.steps >= 0){ //this allows us to use -1 as run till crash..we can ctrl c so
 			if(opts.cur_step > opts.steps) break;
@@ -1167,7 +1218,30 @@ int run_sc(void)
 	return 0;
 }
 
+int getpctest(void)
+{
+	struct emu *e = emu_new();
+	int offset=0;
 
+	if ( opts.verbose > 1 )
+	{
+		emu_cpu_debugflag_set(emu_cpu_get(e), instruction_string);
+		emu_log_level_set(emu_logging_get(e),EMU_LOG_DEBUG);
+	}
+	
+	if ( (offset = emu_shellcode_test(e, (uint8_t *)opts.scode, opts.size)) >= 0 ){
+		printf("Shellcode detected at offset = 0x%08x\n", offset);
+		printf("Would you like to start execution there? (y/n):");
+		offset = getchar() == 'y' ? offset : -1;
+	}
+	else{
+		printf("Did not detect any shellcode in the file\n");
+		offset = -1;
+	}
+	emu_free(e);
+
+	return offset;
+}
 
 
 void print_help(void)
@@ -1182,13 +1256,14 @@ void print_help(void)
 	struct help_info help_infos[] =
 	{
 		{"hex", NULL,      "show hex dumps for hook reads/writes"},
+		{"findsc", NULL , "Scans file for possible shellcode buffers (getpc mode)"},
 		{"S", "< file.sc", "read shellcode/buffer from stdin ex: 'sctest.exe < file.sc'"},
 		{"f", "fpath"    , "load shellcode from file specified."},
 		{"o", "hexnum"   , "base offset to use (default: 0x401000)"},
 		{"redir", "ip:port" , "redirect connect to ip (port optional)"},
 		{"G", "fpath"    , "save a dot formatted callgraph in filepath"},
 		{"i",  NULL		 , "enable interactive hooks"},
-		{"v",  NULL		 , "verbosity, can be used up to 3 times, ex. /v /v or /vv"},
+		{"v",  NULL		 , "verbosity, can be used up to 4 times, ex. /v /v, /vv etc"},
 		{"e", "int"	     , "verbosity on error (3 = debug shell)"},
 		{"t", "int"	     , "time to delay (ms) between steps when v=1 or 2"},
 		{"h",  NULL		 , "show this help"},
@@ -1197,7 +1272,7 @@ void print_help(void)
 		{"d",  NULL	     , "dump unpacked shellcode if changed (requires /f)"},
 		{"las", "int"	 , "log at step ex. -las 100"},
 		{"laa", "hexnum" , "log at address ex. -laa 0x401020"},
-		{"s", "int"	     , "max number of steps to run (def=100000, -1 = run till error)"},
+		{"s", "int"	     , "max number of steps to run (def=1000000, -1 = unlimited)"},
 	};
 
 	int i;
@@ -1246,6 +1321,15 @@ void parse_opts(int argc, char* argv[] ){
 	int sl=0;
 	char buf[5];
 
+	memset(&opts,0,sizeof(struct run_time_options));
+
+	opts.offset = 0;
+	opts.steps = 1000000;
+	opts.file_mode = false;
+	opts.dump_mode = false;
+	opts.getpc_mode = false;
+
+
 	for(i=1; i < argc; i++){
 					
 		sl = strlen(argv[i]);
@@ -1260,6 +1344,7 @@ void parse_opts(int argc, char* argv[] ){
 		if(strstr(buf,"/i") > 0 ) opts.interactive_hooks = 1;
 		if(strstr(buf,"/v") > 0 ) opts.verbose++;	
 		if(sl==4 && strstr(argv[i],"/hex") > 0 )  opts.show_hexdumps = true;
+		if(sl==7 && strstr(argv[i],"/findsc") > 0 ) opts.getpc_mode = true;
 		if(sl==5 && strstr(argv[i],"/vvvv") > 0 ) opts.verbose = 4;
 		if(sl==4 && strstr(argv[i],"/vvv") > 0 )  opts.verbose = 3;
 		if(sl==3 && strstr(argv[i],"/vv")  > 0 )  opts.verbose = 2;
@@ -1272,7 +1357,7 @@ void parse_opts(int argc, char* argv[] ){
 				printf("Invalid option /f must specify a file path as next arg\n");
 				exit(0);
 			}
-			strcpy(opts.sc_file, argv[i+1]);
+			strncpy(opts.sc_file, argv[i+1],499);
 			opts.file_mode = true;
 		}
 
@@ -1369,76 +1454,9 @@ void parse_opts(int argc, char* argv[] ){
 
 }
 
+void loadsc(void){
 
-
-
-
-int main(int argc, char *argv[])
-{
 	FILE *fp;
-	static struct termios oldt;
-
-	tcgetattr( STDIN_FILENO, &oldt);
-	orgt = oldt;
-	oldt.c_lflag &= ~(ICANON | ECHO);                
-	tcsetattr( STDIN_FILENO, TCSANOW, &oldt); 
-
-	signal(SIGINT, ctrl_c_handler); //we break into debugger, they can q from there..
-	signal(SIGABRT,restore_terminal);
-    signal(SIGTERM,restore_terminal);
-	atexit(atexit_restore_terminal);
-
-	memset(&opts,0,sizeof(struct run_time_options));
-
-	opts.steps = 100000;
-	opts.offset = 0;
-	opts.file_mode = false;
-	opts.dump_mode = false;
-	
-	parse_opts(argc, argv);
-	
-	if( opts.override.connect.host != NULL){
-		printf("Override connect host active %s\n", opts.override.connect.host);
-	}
-
-	if( opts.override.connect.port != 0){
-		printf("Override connect port active %d\n", opts.override.connect.port);
-	}
-
-	if(opts.log_after_va  > 0 || opts.log_after_step > 0){
-		
-		if(opts.verbosity_after == 0) opts.verbosity_after =1;
-		if(opts.verbose > opts.verbosity_after) opts.verbosity_after = opts.verbose ;
-		opts.verbose = 0;
-		
-		if(opts.log_after_va  > 0){
-			printf("Will commence logging at eip 0x%x verbosity: %i\n", opts.log_after_va , opts.verbosity_after );
-		}else{
-			printf("Will commence logging at step %d verbosity: %i\n", opts.log_after_step , opts.verbosity_after );
-		}
-
-	}
-
-	if(opts.file_mode == false && opts.from_stdin == false){
-		print_help();
-	}
-
-	if(opts.dump_mode){
-		if( opts.from_stdin) 
-			printf("Dump mode Disabled when getting file from stdin\n"); //no default path to use to lazy to work around
-		else
-			printf("Dump mode Active...\n");
-	};
-		
-	if(opts.interactive_hooks){
-		start_color(myellow);
-		printf("Interactive Hooks enabled\n");
-		end_color();
-	}
-
-	printf("Max Steps: %d\n", opts.steps);
-	printf("Using base offset: 0x%x\n", CODE_OFFSET);
-	if(opts.verbose>0) printf("verbose = %i\n", opts.verbose);
 
 	if ( opts.file_mode  ){
 	
@@ -1448,7 +1466,6 @@ int main(int argc, char *argv[])
 			start_color(myellow);
 			printf("Failed to open file %s\n",opts.sc_file);
 			end_color();
-			tcsetattr( STDIN_FILENO, TCSANOW, &orgt);
 			exit(0);
 		}
 		opts.size = file_length(fp);
@@ -1513,13 +1530,82 @@ int main(int argc, char *argv[])
 	if(opts.size==0){
 		printf("No shellcode loaded must use either /f or /S options\n");
 		print_help();
-		tcsetattr( STDIN_FILENO, TCSANOW, &orgt);
-		return -1;
+		return;
 	}
+
+}
+
+
+
+int main(int argc, char *argv[])
+{
+	static struct termios oldt;
+
+	tcgetattr( STDIN_FILENO, &oldt);
+	orgt = oldt;
+	oldt.c_lflag &= ~(ICANON | ECHO);                
+	tcsetattr( STDIN_FILENO, TCSANOW, &oldt); 
+
+	signal(SIGINT, ctrl_c_handler); //we break into debugger, they can q from there..or x2 to exit
+	signal(SIGABRT,restore_terminal);
+    signal(SIGTERM,restore_terminal);
+	atexit(atexit_restore_terminal);
 	
+	parse_opts(argc, argv);
+	loadsc();
+
+	if(opts.getpc_mode){
+		opts.offset = getpctest();
+		if(opts.offset == -1) return 0;
+		nl();
+	}
+
+	if( opts.override.connect.host != NULL){
+		printf("Override connect host active %s\n", opts.override.connect.host);
+	}
+
+	if( opts.override.connect.port != 0){
+		printf("Override connect port active %d\n", opts.override.connect.port);
+	}
+
+	if(opts.log_after_va  > 0 || opts.log_after_step > 0){
+		
+		if(opts.verbosity_after == 0) opts.verbosity_after =1;
+		if(opts.verbose > opts.verbosity_after) opts.verbosity_after = opts.verbose ;
+		opts.verbose = 0;
+		
+		if(opts.log_after_va  > 0){
+			printf("Will commence logging at eip 0x%x verbosity: %i\n", opts.log_after_va , opts.verbosity_after );
+		}else{
+			printf("Will commence logging at step %d verbosity: %i\n", opts.log_after_step , opts.verbosity_after );
+		}
+
+	}
+
+	if(opts.file_mode == false && opts.from_stdin == false){
+		print_help();
+	}
+
+	if(opts.dump_mode){
+		if( opts.from_stdin) 
+			printf("Dump mode Disabled when getting file from stdin\n"); //no default path to use to lazy to work around
+		else
+			printf("Dump mode Active...\n");
+	};
+		
+	if(opts.interactive_hooks){
+		start_color(myellow);
+		printf("Interactive Hooks enabled\n");
+		end_color();
+	}
+
+	printf("Max Steps: %d\n", opts.steps);
+	printf("Using base offset: 0x%x\n", CODE_OFFSET);
+	if(opts.verbose>0) printf("Verbosity: %i\n", opts.verbose);
+
 	run_sc();
 
-	tcsetattr( STDIN_FILENO, TCSANOW, &orgt);  //if we crash terminal is hosed
+	tcsetattr( STDIN_FILENO, TCSANOW, &orgt);
 	return 0;
 	 
 }
