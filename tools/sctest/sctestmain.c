@@ -33,8 +33,6 @@
 		  display bug, on breakpoint and on error disasm shown twice
 		  general option /foff to set opts.offset so you can start at specific file offset? (already supported in code)
 
-		  
-
 */
 #include "../config.h"
 
@@ -47,34 +45,22 @@
 # include <stdlib.h>
 #endif
 
-
 #include <stdint.h>
 
 #define HAVE_UNISTD
 #ifdef HAVE_UNISTD
 # include <unistd.h>
 #endif
+
 #include <stdio.h>
-
 #include <stdarg.h>
-
-
 #include <errno.h>
-
-#ifdef HAVE_LIBCARGOS
-#include <cargos-lib.h>
-#endif
-
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-
 #include <sys/select.h>
-
 #include <sys/wait.h>
-
 
 #include "emu/emu.h"
 #include "emu/emu_memory.h"
@@ -93,14 +79,9 @@
 #include "emu/emu_graph.h"
 #include "emu/emu_string.h"
 #include "emu/emu_hashtable.h"
-
 #include "emu/emu_shellcode.h"
 
-//#define FAILED "\033[31;1mfailed\033[0m"
-//#define SUCCESS "\033[32;1msuccess\033[0m"
-
 #define F(x) (1 << (x))
-
 
 #include "userhooks.h"
 #include "options.h"
@@ -111,6 +92,7 @@
 
 struct run_time_options opts;
 int graph_draw(struct emu_graph *graph);
+void debugCPU(struct emu *e, bool showdisasm);
 
 //-------------------------------------------------------------
 
@@ -169,6 +151,53 @@ void ctrl_c_handler(int arg){
 	ctrl_c_count++;               //user hit ctrl c a couple times, 
 	if(ctrl_c_count > 1) exit(0); //must want out for real.. (zeroed each step)
 }
+
+void symbol_lookup(char* symbol){
+	
+	bool dllmap_mode = false;
+
+	if(strcmp(symbol,"peb") == 0){
+		printf("\tpeb -> 0x00251ea0\n");
+		return;
+	}
+
+	if(strcmp(symbol,"fs0") == 0){
+		printf("\tpeb -> 0x%x\n", FS_SEGMENT_DEFAULT_OFFSET);
+		return;
+	}
+
+	if(strcmp(symbol,"dllmap") == 0) dllmap_mode = true;
+
+	int numdlls=0;
+	while ( env->env.win->loaded_dlls[numdlls] != 0 ){
+		 
+		struct emu_env_w32_dll *dll = env->env.win->loaded_dlls[numdlls];
+		
+		if(dllmap_mode){
+			printf("\t%-8s Dll mapped at %x - %x\n", dll->dllname, dll->baseaddr , dll->baseaddr+dll->imagesize);
+		}
+		else{
+			if(strcmp(dll->dllname, symbol)==0){
+				printf("\t%s Dll mapped at %x - %x\n", dll->dllname, dll->baseaddr , dll->baseaddr+dll->imagesize);
+				return;
+			}
+			
+			struct emu_hashtable_item *ehi = emu_hashtable_search(dll->exports_by_fnname, (void *)symbol);
+			
+
+			if ( ehi != 0 ){
+				int dllBase = dll->baseaddr; 
+				struct emu_env_hook *hook = (struct emu_env_hook *)ehi->value;
+				printf("\tAddress found: %s - > %x\n", symbol, dllBase + hook->hook.win->virtualaddr);
+				return;
+			}	
+		}
+		numdlls++;
+	}
+	if(!dllmap_mode) printf("\tNo results found...\n");
+}
+
+
 
 int fulllookupAddress(int eip, char* buf255){
 
@@ -372,8 +401,8 @@ void show_disasm(struct emu *e){  //current line
 
 }
 
-int read_hex(char* prompt, char* buf){
-	int base = 0;
+unsigned int read_hex(char* prompt, char* buf){
+	unsigned int base = 0;
 	int nBytes = 20;
 	int i=0;
 
@@ -390,7 +419,11 @@ int read_hex(char* prompt, char* buf){
 		}
 	}
 
-	if(base==0) base = strtol(buf, NULL, 16);
+	if(base==0){
+		base = strtol(buf, NULL, 16); //support negative numbers..
+		if(base == INT32_MAX) base = strtoul(buf, NULL, 16); //but in this case assume unsigned val entered
+	}
+
 	printf("%x\n",base);
 
 	return base;
@@ -409,8 +442,8 @@ int read_string(char* prompt, char* buf){
 }
 
 
-int read_int(char* prompt, char* buf){
-	int base = 0;
+unsigned int read_int(char* prompt, char* buf){
+	unsigned int base = 0;
 	int nBytes = 20;
 	int i=0;
 
@@ -502,9 +535,13 @@ void show_debugshell_help(void){
 			"\tk - show stack\n"
 			"\ti - break at instruction (scans disasm for next string match)\n"
 			"\tf - dereF registers (show any common api addresses in regs)\n"  
-			"\t.lp - do a full lookup of an address\n"  
+			"\t.lp - lookup - get symbol for address\n"  
+			"\t.pl - reverse lookup - get address for symbol\n"  
 			"\t.seh - shows current value at fs[0]\n"
-			"\t.savemem - saves a memdump of range specified to file\n"
+			"\t.reg - manually set register value\n"
+			"\t.poke1 - write a single byte to memory\n"
+			"\t.poke4 - write a 4 byte value to memory\n"
+			"\t.savemem - saves a memdump of specified range to file\n"
 			"\tq - quit\n\n"
 		  );
 }
@@ -521,11 +558,12 @@ void interactive_command(struct emu *e){
 	char *buf=0;
 	char *tmp = (char*)malloc(21);
 	char lookup[255];
-	int base=0;
-	int size=0;
-	int i=0;
+	unsigned int base=0;
+	unsigned int size=0;
+	unsigned int i=0;
 	int bytes_read=0;
 	char x[2]; x[1]=0;
+    //uint8_t byte = 0;
 
 	while(1){
 
@@ -548,11 +586,44 @@ void interactive_command(struct emu *e){
 			if(i>0){
 				if(strcmp(tmp,"seh")==0) show_seh();
 				if(strcmp(tmp,"savemem")==0) savemem();
+				if(strcmp(tmp,"pl")==0){
+					i = read_string("Enter symbol to lookup address for: ", tmp);
+					symbol_lookup(tmp);
+				}
 				if(strcmp(tmp,"lp")==0){
 					base = read_hex("Enter address to do a lookup on", tmp);
 					if(base > 0){
 						if( fulllookupAddress(base, (char*)&lookup) > 0){
 							printf("\tFound: %s\n", lookup);
+						}
+					}
+				}
+				if(strcmp(tmp,"poke4")==0){
+					base = read_hex("Enter address to write to", tmp);
+					if(base > 0){
+						 i = read_hex("Enter value to write", tmp);
+						 emu_memory_write_dword(mem,base,i);
+					}
+				}
+				if(strcmp(tmp,"poke1")==0){
+					base = read_hex("Enter address to write to", tmp);
+					if(base > 0){
+						 i = read_hex("Enter value to write", tmp);
+						 emu_memory_write_byte(mem,base,(uint8_t)i);
+					}
+				}
+				if(strcmp(tmp,"reg")==0){
+					base = read_string("Enter register name to modify:", tmp);
+					if(base > 0){
+						for(i=0;i<8;i++){
+							if(strcmp(regm[i], tmp)==0) break;
+						}
+						if(i < 8){
+							printf("set %s to", regm[i]);
+							base = read_hex("", tmp);
+							cpu->reg[i] = base;
+							nl();
+							debugCPU(e,true);
 						}
 					}
 				}
@@ -763,7 +834,9 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "ShellExecuteA", new_user_hook_ShellExecuteA, NULL);
 	emu_env_w32_export_new_hook(env, "SHGetSpecialFolderPathA", new_user_hook_SHGetSpecialFolderPathA, NULL);
 	emu_env_w32_export_new_hook(env, "MapViewOfFile", new_user_hook_MapViewOfFile, NULL);
-
+	emu_env_w32_export_new_hook(env, "URLDownloadToCacheFileA", new_user_hook_URLDownloadToCacheFileA, NULL);
+	emu_env_w32_export_new_hook(env, "system", new_user_hook_system, NULL);
+	
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "CreateFileMappingA", new_user_hook_GenericStub, NULL);
@@ -1256,14 +1329,15 @@ void print_help(void)
 	struct help_info help_infos[] =
 	{
 		{"hex", NULL,      "show hex dumps for hook reads/writes"},
-		{"findsc", NULL , "Scans file for possible shellcode buffers (getpc mode)"},
-		{"S", "< file.sc", "read shellcode/buffer from stdin ex: 'sctest.exe < file.sc'"},
+		{"findsc", NULL ,  "Scans file for possible shellcode buffers (getpc mode)"},
+		{"foff", "hexnum" ,"starts execution at file offset"},
+		{"S", "< file.sc", "read shellcode/buffer from stdin"},
 		{"f", "fpath"    , "load shellcode from file specified."},
 		{"o", "hexnum"   , "base offset to use (default: 0x401000)"},
-		{"redir", "ip:port" , "redirect connect to ip (port optional)"},
+		{"redir", "ip:port","redirect connect to ip (port optional)"},
 		{"G", "fpath"    , "save a dot formatted callgraph in filepath"},
 		{"i",  NULL		 , "enable interactive hooks"},
-		{"v",  NULL		 , "verbosity, can be used up to 4 times, ex. /v /v, /vv etc"},
+		{"v",  NULL		 , "verbosity, can be used up to 4 times, ex. /v /v /vv"},
 		{"e", "int"	     , "verbosity on error (3 = debug shell)"},
 		{"t", "int"	     , "time to delay (ms) between steps when v=1 or 2"},
 		{"h",  NULL		 , "show this help"},
@@ -1272,7 +1346,7 @@ void print_help(void)
 		{"d",  NULL	     , "dump unpacked shellcode if changed (requires /f)"},
 		{"las", "int"	 , "log at step ex. -las 100"},
 		{"laa", "hexnum" , "log at address ex. -laa 0x401020"},
-		{"s", "int"	     , "max number of steps to run (def=1000000, -1 = unlimited)"},
+		{"s", "int"	     , "max number of steps to run (def=1000000, -1 unlimited)"},
 	};
 
 	int i;
@@ -1296,9 +1370,9 @@ void print_help(void)
 		printf("  /%1s ", help_infos[i].short_param);
 
 		if (help_infos[i].args != NULL)
-			printf("%-3s ", help_infos[i].args);
+			printf("%-12s ", help_infos[i].args);
 		else
-			printf("%7s "," ");
+			printf("%12s "," ");
 
 		printf("\t%s\n", help_infos[i].description);
 	}
@@ -1352,7 +1426,7 @@ void parse_opts(int argc, char* argv[] ){
 		if(sl==2 && strstr(buf,"/h") > 0 ) print_help();
 		if(strstr(buf,"/S") > 0 ) opts.from_stdin = true;
 
-		if(strstr(buf,"/f") > 0 ){
+		if(sl==2 && strstr(buf,"/f") > 0 ){
 			if(i+1 >= argc){
 				printf("Invalid option /f must specify a file path as next arg\n");
 				exit(0);
@@ -1367,6 +1441,14 @@ void parse_opts(int argc, char* argv[] ){
 				exit(0);
 			}
 		    CODE_OFFSET = strtol(argv[i+1], NULL, 16);			
+		}
+
+		if(sl==5 && strstr(argv[i],"/foff") > 0 ){
+			if(i+1 >= argc){
+				printf("Invalid option /foff must specify start file offset as next arg\n");
+				exit(0);
+			}
+			opts.offset = strtol(argv[i+1], NULL, 16);
 		}
 
 		if(sl==3 && strstr(argv[i],"/bp") > 0 ){
@@ -1553,6 +1635,10 @@ int main(int argc, char *argv[])
 	
 	parse_opts(argc, argv);
 	loadsc();
+
+	if(opts.offset > 0){
+		printf("Execution starts at file offset 0x%04x (start byte: %X)\n", opts.offset, opts.scode[opts.offset]);
+	}
 
 	if(opts.getpc_mode){
 		opts.offset = getpctest();

@@ -314,12 +314,12 @@ uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook,
 	//printf("Hook me Captain Cook!\n");
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
-	uint32_t retaddr = get_ret(env, -1*((8*4)+4) );
+	uint32_t retaddr = get_ret(env, -44);
 
 	va_list vl;
 	va_start(vl, hook);
 
-	/* char *pszImageName				  = */ (void)va_arg(vl, char *);
+	char *pszImageName				      = va_arg(vl, char *);  //now filled in - dz
 	char *pszCmdLine                      = va_arg(vl, char *);               
 
 	//STARTUPINFO *psiStartInfo             = va_arg(vl, STARTUPINFO *);
@@ -327,7 +327,7 @@ uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook,
 
 	va_end(vl);
 
-	printf("%x\tCreateProcess(%s)\n",retaddr, pszCmdLine );
+	printf("%x\tCreateProcess( %s, %s )\n",retaddr, pszCmdLine, pszImageName );
 
 	if(opts.interactive_hooks == 0) return 1;
 
@@ -1723,8 +1723,84 @@ int32_t	new_user_hook_MapViewOfFile(struct emu_env *env, struct emu_env_hook *ho
 	return 0;
 }
 
+int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_env_hook *hook)
+{
+	struct emu_cpu *c = emu_cpu_get(env->emu);
 
+	uint32_t eip_save;
 
+	POP_DWORD(c, &eip_save);
+
+/*
+	HRESULT URLDownloadToCacheFile(      
+		LPUNKNOWN lpUnkcaller,
+		LPCSTR szURL,
+		LPTSTR szFileName,
+		DWORD cchFileName,
+		DWORD dwReserved,
+		IBindStatusCallback *pBSC
+	);
+*/
+	uint32_t stack_addr = cpu->reg[esp]; 
+	uint32_t p_url =0;
+	uint32_t p_fname =0;
+	uint32_t bufsz =0;
+
+	emu_memory_read_dword(mem,stack_addr+4, &p_url);
+	emu_memory_read_dword(mem,stack_addr+8, &p_fname);
+	emu_memory_read_dword(mem,stack_addr+12, &bufsz);
+
+	stack_addr -= 6*4;
+	cpu->reg[esp] = stack_addr;
+
+	struct emu_string *s_url = emu_string_new();
+
+	emu_memory_read_string(mem, p_url, s_url, 255);
+
+	printf("%x\tURLDownloadToCacheFileA(%s)\n",eip_save,  emu_string_char(s_url));
+
+	emu_string_free(s_url);
+
+	char* tmp = "c:\\URLCacheTmpPath.exe";
+
+	//printf("bufsize = %d , pfname = %x\n", bufsz, p_fname);
+
+	if(bufsz > strlen(tmp) )
+		emu_memory_write_block(mem,p_fname, tmp, strlen(tmp));
+	
+	
+	emu_cpu_reg32_set(c, eax, 0); //S_OK = 0
+	emu_cpu_eip_set(c, eip_save);
+	return 1;
+}
+
+int32_t	new_user_hook_system(struct emu_env *env, struct emu_env_hook *hook)
+{
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+	uint32_t stack_addr = cpu->reg[esp]; 
+	uint32_t p_url =0;
+
+	emu_memory_read_dword(mem,stack_addr+0, &p_url);
+
+	stack_addr -= 1*4;
+	cpu->reg[esp] = stack_addr;
+
+	struct emu_string *s_url = emu_string_new();
+
+	emu_memory_read_string(mem, p_url, s_url, 255);
+
+	printf("%x\tsystem(%s)\n",eip_save,  emu_string_char(s_url));
+
+	emu_string_free(s_url);
+	emu_cpu_reg32_set(c, eax, 0);  
+	emu_cpu_eip_set(c, eip_save);
+	return 1;
+}
 
 
 

@@ -1,11 +1,10 @@
 		Changelog for libemu
 
 1.28.11
-	re-exposed getpc mode with /findsc option
-	added hook for GlobalAlloc
-	added .savemem command in debug shell
-	added .lp lookup command in debug shell
-	changed partial lookup_address fulllookupaddress
+	re-exposed getpc mode with /findsc option, start at file offwset with /foff option
+	added hooks for GlobalAlloc, UrlDownloadToCacheFileA, system
+	added .savemem .lp .pl .reg .poke1 .poke4 to debug shell 
+	changed partial lookup_address fulllookupaddress, read_hex now can accept unsigned long vals
 	updated lookup to search all api not just subset (used in stack dump, deref regs, dump dwords, and .lp)
 	implemented nanny on _lcreate series hooks, tested interactive mode w *create
 	added support for hexdump mode in all appropirate hooks

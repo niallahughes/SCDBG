@@ -290,7 +290,7 @@ int32_t	env_w32_hook_CreateProcessA(struct emu_env *env, struct emu_env_hook *ho
 	if ( hook->hook.win->userhook != NULL )
 	{
 		returnvalue = hook->hook.win->userhook(env, hook, 
-											   /* LPCWSTR pszImageName,             */ NULL,
+											   /* LPCWSTR pszImageName,             */ emu_string_char(imagename), /*dzzie*/
 											   /* LPCWSTR pszCmdLine,               */ emu_string_char(command),
 											   /* LPSECURITY_ATTRIBUTES psaProcess, */ NULL,
 											   /* LPSECURITY_ATTRIBUTES psaThread,  */ NULL,
