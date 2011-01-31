@@ -1,5 +1,9 @@
 		Changelog for libemu
 
+1.31.11
+	dll - tweaked PEB init routines, now works with method used in Shellcoders Handbook (didier msgbox example)
+	exe - added dbg cmd g (go) and .so (step over)
+	
 1.28.11
 	re-exposed getpc mode with /findsc option, start at file offwset with /foff option
 	added hooks for GlobalAlloc, UrlDownloadToCacheFileA, system
@@ -36,6 +40,7 @@
       - the visual studio workspace and project files are only for editing ! you must use gcc to compile
          this has been compiled with the current version of cygwin with dev packages installed.
    
+         
 30.11.2008 libemu 0.2.0
  ( created with svn log -r HEAD:1385 | grep -v -- "----" | grep -v ^r | grep -v ^libemu | grep -v "^$")
  - stubs for 

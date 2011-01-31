@@ -59,5 +59,4 @@ int32_t	new_user_hook_CreateProcessInternalA(struct emu_env *env, struct emu_env
 int32_t	new_user_hook_GlobalAlloc(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_MapViewOfFile(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_env_hook *hook);
-int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_system(struct emu_env *env, struct emu_env_hook *hook);

@@ -162,7 +162,7 @@ void symbol_lookup(char* symbol){
 	}
 
 	if(strcmp(symbol,"fs0") == 0){
-		printf("\tpeb -> 0x%x\n", FS_SEGMENT_DEFAULT_OFFSET);
+		printf("\tfs0 -> 0x%x\n", FS_SEGMENT_DEFAULT_OFFSET);
 		return;
 	}
 
@@ -209,7 +209,7 @@ int fulllookupAddress(int eip, char* buf255){
 		if ( eip == env->env.win->loaded_dlls[numdlls]->baseaddr ){
 			
 			if(eip == 0x7C800000)
-				strcpy(buf255, "PEB Base Address");
+				strcpy(buf255, "Kernel32 Base Address");
 			else
 				sprintf(buf255, "%s Base Address", env->env.win->loaded_dlls[numdlls]->dllname );
 			
@@ -521,7 +521,8 @@ void show_debugshell_help(void){
 			"\n"
 			"\t? - help, this help screen, h also works\n"
 			"\tv - change verbosity (0-4)\n"
-			"\ts - step, continues execution, g or ENTER also work\n"
+			"\tg - go - continue with v=0 \n"
+			"\ts - step, continues execution, ENTER also works\n"
 			"\tc - reset step counter\n"
 			"\tr - execute till return (v=0 recommended)\n"
 			"\tu - unassembled address\n"
@@ -535,6 +536,7 @@ void show_debugshell_help(void){
 			"\tk - show stack\n"
 			"\ti - break at instruction (scans disasm for next string match)\n"
 			"\tf - dereF registers (show any common api addresses in regs)\n"  
+			"\t.so - step over (macro for exec return v 0\n" 
 			"\t.lp - lookup - get symbol for address\n"  
 			"\t.pl - reverse lookup - get address for symbol\n"  
 			"\t.seh - shows current value at fs[0]\n"
@@ -573,7 +575,8 @@ void interactive_command(struct emu *e){
 		//if(c!='.') nl();
 
 		if(c=='q'){ opts.steps =0; break; }
-		if(c=='s' || c=='g' || c== 0x0A) break;
+		if(c=='g'){ opts.verbose =0; break; }
+		if(c=='s' || c== 0x0A) break;
 		if(c=='?' || c=='h') show_debugshell_help();
 		if(c=='f') deref_regs();
 		if(c=='k'){ nl(); show_stack(); nl();}
@@ -586,6 +589,11 @@ void interactive_command(struct emu *e){
 			if(i>0){
 				if(strcmp(tmp,"seh")==0) show_seh();
 				if(strcmp(tmp,"savemem")==0) savemem();
+				if(strcmp(tmp,"so")==0){
+					opts.exec_till_ret = true;
+					opts.verbose = 0;
+					break;
+				}
 				if(strcmp(tmp,"pl")==0){
 					i = read_string("Enter symbol to lookup address for: ", tmp);
 					symbol_lookup(tmp);
@@ -956,20 +964,21 @@ int run_sc(void)
 	//printf("writing initial stack space\n");
 	emu_memory_write_block(mem, regs[esp] - 250, stack, stacksz);
 
-	/*  working now
+	/*  this block no longer necessary after dll PEB modifications 1-32-11
 		401016   64A130000000                    mov eax,fs:[0x30]  ;&(PEB)
 		40101c   8B400C                          mov eax,[eax+0xc]  ;PEB->Ldr
 		40101f   8B701C                          mov esi,[eax+0x1c] ;PEB->Ldr.InInitOrder 
 		401022   AD                              lodsd              ;PEB->Ldr.InInitOrder.flink (kernel32.dll)
 		401023   8B6820                          mov ebp,[eax+0x20]  InInitOrder[X].module_name (unicode)
-		401026   807D0C33                        cmp byte [ebp+0xc],0x33  //not kernel32.dll 
-	*/
+		401026   807D0C33                        cmp byte [ebp+0xc],0x33   
+	
 	unsigned char uni_k32[23] = {
 			0x6B, 0x00, 0x65, 0x00, 0x72, 0x00, 0x6E, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x33, 0x00, 0x32, 0x00, 
 			0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C
 	};
 	emu_memory_write_block(mem, 0x252020+0x40, uni_k32, 23 ); //embed the data
 	emu_memory_write_dword(mem, 0x252020+0x20, 0x252020+0x40); //embed the pointer
+	*/
 
 	//some of the shellcodes look for hooks set on some API, lets add some mem so it exists to check
     emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile
@@ -1236,7 +1245,6 @@ int run_sc(void)
    		 
 			printf("Scanning for changes...\n");
 			for(ii=0;ii<opts.size;ii++){
-				//printf("%x\t%x\n", opts.scode[ii], tmp[ii]); 
 				if(opts.scode[ii] != tmp[ii]) break;
 			}
 

@@ -1769,7 +1769,7 @@ int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_en
 		emu_memory_write_block(mem,p_fname, tmp, strlen(tmp));
 	
 	
-	emu_cpu_reg32_set(c, eax, 0); //S_OK = 0
+	emu_cpu_reg32_set(c, eax, 0); // S_OK 
 	emu_cpu_eip_set(c, eip_save);
 	return 1;
 }

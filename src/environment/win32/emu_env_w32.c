@@ -267,13 +267,13 @@ struct emu_env_w32 *emu_env_w32_new(struct emu *e)
 	// http://msdn.microsoft.com/en-us/library/aa813708%28VS.85%29.aspx
 	typedef struct _LIST_ENTRY
 	{
-//		struct _LIST_ENTRY *Flink;
+//		struct _LIST_ENTRY *Flink;  
 		uint32_t Flink;
 		uint32_t Blink;
 //		struct _LIST_ENTRY *Blink;
 	} LIST_ENTRY, *PLIST_ENTRY; //, *RESTRICTED_POINTER PRLIST_ENTRY;
 
-	typedef uint32_t PVOID;
+    typedef uint32_t PVOID;
 	typedef unsigned char BYTE;
 	typedef uint32_t ULONG;
 
@@ -284,10 +284,10 @@ struct emu_env_w32 *emu_env_w32_new(struct emu *e)
 		/* 0x0f */ LIST_ENTRY InInitializationOrderLinks;
 		/* 0x18 */ uint32_t DllBase;
 		/* 0x1c */ uint32_t EntryPoint;
-		/* 0x1f */ uint32_t Reserved3;
+		/* 0x1f */ uint32_t Reserved;           
 		/* 0x24 */ UNICODE_STRING FullDllName;
 		/* 0x2c */ UNICODE_STRING BaseDllName;
-		/* 0x00 */ uint32_t Reserved5[3];
+		/* 0x30 */ uint32_t Reserved5[3];
 		union
 		{
 			ULONG CheckSum;
@@ -313,7 +313,11 @@ struct emu_env_w32 *emu_env_w32_new(struct emu *e)
 	peb_ldr_data.InMemoryOrderModuleList.Flink = 0x00251ea0 + 0x1000 + offsetof(struct _LDR_DATA_TABLE_ENTRY, InMemoryOrderLinks);
 	peb_ldr_data.InInitializationOrderModuleList.Flink = 0x00251ea0 + 0x1000 + offsetof(struct _LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks);
 
+	//printf("peb_ldr_data.InMemoryOrderModuleList.Flink = %x\n",peb_ldr_data.InMemoryOrderModuleList.Flink);
+
 	emu_memory_write_block(mem, 0x00251ea0, &peb_ldr_data, sizeof(peb_ldr_data));
+
+	emu_memory_write_dword(mem, 0x251eac, 0x252ea0); //fs30+0xC+0xC -> LDR_DATA_TABLES //dzzie (shellcoders handbook example)
 
 	uint32_t magic_offset = 0x00251ea0+0x1000;
 
@@ -324,7 +328,8 @@ struct emu_env_w32 *emu_env_w32_new(struct emu *e)
 	memset(names, 0, sizeof(names));
 
 	int i;
-	for ( i=0; known_dlls[i].dllname != NULL; i++ )
+	//should this be set to i=1 because of peb dummy entry? - no breaks all - dzzie
+	for ( i=0; known_dlls[i].dllname != NULL; i++ ) 
 	{
 		struct emu_env_w32_known_dll *from = known_dlls+i;
 		struct _LDR_DATA_TABLE_ENTRY *to = tables+i;
@@ -332,10 +337,19 @@ struct emu_env_w32 *emu_env_w32_new(struct emu *e)
 		to->DllBase = from->baseaddress;
 		to->BaseDllName.Length = (strlen(from->dllname) + strlen(".dll")) * 2 + 2;
 		to->BaseDllName.MaximumLength = to->BaseDllName.Length;// + 2;
-		to->BaseDllName.Buffer = magic_offset + sizeof(tables) + i * 64;
+		to->BaseDllName.Buffer = magic_offset + sizeof(tables) + i * 64;  
+		
+		to->FullDllName.Length = to->BaseDllName.Length; //dzzie next 3
+		to->FullDllName.MaximumLength = to->BaseDllName.MaximumLength;
+		to->FullDllName.Buffer = to->BaseDllName.Buffer;
+
+		//printf("PebLdrDataTable Dllname %s buffer %x\n", from->dllname , to->BaseDllName.Buffer);
 
 		to->InMemoryOrderLinks.Blink = 0xaabbccdd;
 		to->InMemoryOrderLinks.Flink = magic_offset + (i+1) * sizeof(struct _LDR_DATA_TABLE_ENTRY) + offsetof(struct _LDR_DATA_TABLE_ENTRY, InMemoryOrderLinks);
+		
+		//dzzie - support shellcoders handbook method (didier msgbox example)
+		to->InLoadOrderLinks.Flink = to->InMemoryOrderLinks.Flink - 8; 
 
 		to->InInitializationOrderLinks.Blink = 0xa1b2c3d4;
 		to->InInitializationOrderLinks.Flink = magic_offset + (i+1) * sizeof(struct _LDR_DATA_TABLE_ENTRY) + offsetof(struct _LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks);
