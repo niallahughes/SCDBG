@@ -1,5 +1,9 @@
 		Changelog for libemu
 
+2.2.11
+	dll - added support for wininet.dll
+	exe - added hooks InternetOpenA, InternetOpenUrlA, InternetReadFile, VirtualAlloc
+	
 2.1.11
     dll - added memory monitor feature 2 new exports, 
          void emu_memory_set_access_monitor(uint32_t lpfnCallback);

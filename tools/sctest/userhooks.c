@@ -1558,6 +1558,13 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	  __in_opt  LPCTSTR lpName
 	);
 
+	BOOL InternetReadFile(
+	  __in   HINTERNET hFile,
+	  __out  LPVOID lpBuffer,
+	  __in   DWORD dwNumberOfBytesToRead,
+	  __out  LPDWORD lpdwNumberOfBytesRead
+	);
+
 
 */
 
@@ -1575,6 +1582,12 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	if(strcmp(func, "GetFileSize") == 0){
 		log_val = get_ret(env,0); //handle
 		arg_count = 2;
+	}
+
+	if(strcmp(func, "InternetReadFile") == 0){
+		log_val = get_ret(env,4); //lpBuffer
+		ret_val = get_ret(env,12);
+		arg_count = 4;
 	}
 
 	if(arg_count==0){
@@ -1844,11 +1857,12 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 
 	uint32_t baseMemAddress = 0x666666;
 
-	if(size > 0 && size < 9000){
+	if(size < 9000){
+		printf("%x\tVirtualAlloc(base=%x , sz=%x) = %x\n", eip_save, address, size, baseMemAddress);
+		if(size < 1024) size = 1024;
 		void *buf = malloc(size);
 		memset(buf,0,size);
 		emu_memory_write_block(mem,baseMemAddress,buf, size);
-		printf("%x\tVirtualAlloc(base=%x , sz=%x) = %x\n", eip_save, address, size, baseMemAddress);
 		free(buf);
 	}else{
 		printf("%x\tVirtualAlloc(sz=%x) (Ignored size out of range)\n", eip_save, size);
@@ -1860,6 +1874,89 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 }
 
 
+int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	HINTERNET InternetOpenA(
+	  __in  LPCTSTR lpszAgent,
+	  __in  DWORD dwAccessType,
+	  __in  LPCTSTR lpszProxyName,
+	  __in  LPCTSTR lpszProxyBypass,
+	  __in  DWORD dwFlags
+	);
+
+	HINTERNET InternetOpenUrl(
+	  __in  HINTERNET hInternet,
+	  __in  LPCTSTR lpszUrl,
+	  __in  LPCTSTR lpszHeaders,
+	  __in  DWORD dwHeadersLength,
+	  __in  DWORD dwFlags,
+	  __in  DWORD_PTR dwContext
+	);
+
+
+*/
+	int arg_count=0;
+	int ret_val = 1;
+    int log_sarg = -1; //stub support optional logging of 2 string arg
+	int log_sarg2 = -1; //stub support optional logging of 2 string args
+	int sarg1_len = 255;
+	int sarg2_len = 255;
+
+	char* func = hook->hook.win->fnname;
+
+	if(strcmp(func, "InternetOpenA") ==0 ){
+		log_sarg = get_ret(env,0);  //lpszAgent
+		arg_count = 5;
+	}
+
+	if(strcmp(func, "InternetOpenUrlA") ==0 ){
+		log_sarg = get_ret(env,4);  //url
+		sarg1_len = 500;
+		arg_count = 6;
+	}
+
+	if(arg_count==0){
+		printf("invalid use of generic stub no match found for %s",func);
+		exit(0);
+	}
+
+	int r_esp = cpu->reg[esp];
+	r_esp -= arg_count*4;
+	
+	cpu->reg[esp] = r_esp;
+
+	if(log_sarg == -1){
+		printf("%x\t%s()\n", eip_save, func );
+	}
+	else if(log_sarg2 == -1){
+		struct emu_string *s_data = emu_string_new();
+	    emu_memory_read_string(mem, log_sarg, s_data, sarg1_len);
+		printf("%x\t%s(%s)\n", eip_save, func, emu_string_char(s_data) );
+		emu_string_free(s_data);
+	}
+	else{ //two string args
+		struct emu_string *s_1 = emu_string_new();
+		struct emu_string *s_2 = emu_string_new();
+	    emu_memory_read_string(mem, log_sarg, s_1, sarg1_len);
+		emu_memory_read_string(mem, log_sarg2, s_2, sarg2_len);
+		printf("%x\t%s(%s , %s)\n", eip_save, func, emu_string_char(s_1), emu_string_char(s_2) );
+		emu_string_free(s_1);
+		emu_string_free(s_2);
+	}
+
+
+	emu_cpu_reg32_set(c, eax, ret_val);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
 
 
 

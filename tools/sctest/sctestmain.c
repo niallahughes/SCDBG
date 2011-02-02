@@ -27,13 +27,11 @@
 
 /*  this source has been modified from original see changelog 
 
-	TODO: seh handler - remove last handler on trigger?
+	TODO: 
 		  support unhandledexceptionfilter w/seh (implement as req)
 		  display bug, on breakpoint and on error disasm shown twice
 		  add string deref for pointers in stack dump, deref regs and dword dump?
-		  possible add call back to monitor mem access of specific addresses (PEB, TEB etc)
 		  opcodes A9 and 2F could use supported (pretty easy ones too i think)
-		  add support for getting k32base from TEB (fs18) and SEH methods
 
 */
 #include "../config.h"
@@ -127,7 +125,7 @@ struct mm_point mm_points[] =
 { //http://en.wikipedia.org/wiki/Win32_Thread_Information_Block
 	{0x00251ea0,"PEB Data",0},
 	{0x7ffdf000,"SEH (fs0)",0},
-	{0x7ffdf030,"PEB (fs30)",0},
+	{0x7ffdf030,"*PEB (fs30)",0},
 	{0x7ffdf000+4,"Top of thread Stack (fs4)",0},
 	{0x7ffdf000+0x18,"TEB (fs18)",0},
 	{0x7ffdf030+0xC,"peb.InLoadOrderModuleList",0},
@@ -832,6 +830,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_load_dll(env->env.win,"msvcrt.dll");
 	emu_env_w32_load_dll(env->env.win,"urlmon.dll");
 	emu_env_w32_load_dll(env->env.win,"ws2_32.dll");
+	emu_env_w32_load_dll(env->env.win,"wininet.dll");
 
 	emu_env_w32_export_hook(env, "ExitProcess", user_hook_ExitProcess, NULL);
 	emu_env_w32_export_hook(env, "ExitThread", user_hook_ExitThread, NULL);
@@ -888,7 +887,9 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "CreateFileMappingA", new_user_hook_GenericStub, NULL);
-
+	emu_env_w32_export_new_hook(env, "InternetOpenA", new_user_hook_GenericStub2String, NULL);
+	emu_env_w32_export_new_hook(env, "InternetOpenUrlA", new_user_hook_GenericStub2String, NULL);
+	emu_env_w32_export_new_hook(env, "InternetReadFile", new_user_hook_GenericStub, NULL);
 
 
 }
@@ -1331,7 +1332,6 @@ int run_sc(void)
     //------------------ [ dump decoded buffer added dzzie ] ----------------------
 
 	if(opts.mem_monitor){
-		//printf("\n%s\n", mm_log);
 		printf("\nMemory Monitor Log:\n");
 		i=0;
 		while(mm_points[i].address != 0){
@@ -1620,7 +1620,6 @@ void loadsc(void){
 
 	if ( opts.file_mode  ){
 	
-		opts.from_stdin = true;
 		fp = fopen(opts.sc_file, "rb");
 		if(fp==0){
 			start_color(myellow);
@@ -1717,7 +1716,6 @@ int main(int argc, char *argv[])
 
 	if(opts.mem_monitor){
 		printf("Memory monitor enabled..\n");
-		//asprintf(&mm_log, "Memory Monitor Log:\n");
 		emu_memory_set_access_monitor((uint32_t)mm_hook);
 		while(mm_points[i].address != 0){
 			emu_memory_add_monitor_point(mm_points[i++].address);
