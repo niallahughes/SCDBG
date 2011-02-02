@@ -1,5 +1,14 @@
 		Changelog for libemu
 
+2.1.11
+    dll - added memory monitor feature 2 new exports, 
+         void emu_memory_set_access_monitor(uint32_t lpfnCallback);
+		 void emu_memory_add_monitor_point(uint32_t address);
+	exe - implemented logging of access to key memory offsets when in /mm mode
+	      (allows you to quickly see which peb elements it uses for profiling)
+	      added support for top-stack and seh based methods of getting k32 base
+	      SetUnhandledExceptionFilter hook now also sets fs:0 handler. 
+
 1.31.11
 	dll - tweaked PEB init routines, now works with method used in Shellcoders Handbook (didier msgbox example)
 	exe - added dbg cmd g (go) and .so (step over)

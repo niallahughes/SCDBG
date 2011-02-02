@@ -25,13 +25,15 @@
  *
  *******************************************************************************/
 
-/*  this source has been modified from original. 
+/*  this source has been modified from original see changelog 
 
-	TODO: test interactive hooks more (fwrite/CreateFileA need cygwin safe path call?)
+	TODO: seh handler - remove last handler on trigger?
 		  support unhandledexceptionfilter w/seh (implement as req)
-		  implement a symbol name to offset lookup?
 		  display bug, on breakpoint and on error disasm shown twice
-		  general option /foff to set opts.offset so you can start at specific file offset? (already supported in code)
+		  add string deref for pointers in stack dump, deref regs and dword dump?
+		  possible add call back to monitor mem access of specific addresses (PEB, TEB etc)
+		  opcodes A9 and 2F could use supported (pretty easy ones too i think)
+		  add support for getting k32base from TEB (fs18) and SEH methods
 
 */
 #include "../config.h"
@@ -100,7 +102,7 @@ void debugCPU(struct emu *e, bool showdisasm);
 #include <termios.h>
 #include <signal.h>
 
-#define FS_SEGMENT_DEFAULT_OFFSET 0x7ffdf000
+uint32_t FS_SEGMENT_DEFAULT_OFFSET = 0x7ffdf000;
 int CODE_OFFSET = 0x00401000;
 static struct termios orgt;
 int ctrl_c_count=0;
@@ -110,6 +112,8 @@ struct emu *e = 0;
 struct emu_cpu *cpu = 0;
 struct emu_memory *mem = 0;
 struct emu_env *env = 0;
+uint32_t last_good_eip=0;
+bool disable_mm_logging = false;
 
 char *regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
 
@@ -119,27 +123,32 @@ const char *eflagm[] = { "CF", "  ", "PF", "  " , "AF"  , "    ", "ZF", "SF",
 	                     "RF", "VM", "AC", "VIF", "RIP" , "ID"  , "  ", "  ",
 	                     "  ", "  ", "  ", "   ", "    ", "    ", "  ", "  "};
 
+struct mm_point mm_points[] = 
+{ //http://en.wikipedia.org/wiki/Win32_Thread_Information_Block
+	{0x00251ea0,"PEB Data",0},
+	{0x7ffdf000,"SEH (fs0)",0},
+	{0x7ffdf030,"PEB (fs30)",0},
+	{0x7ffdf000+4,"Top of thread Stack (fs4)",0},
+	{0x7ffdf000+0x18,"TEB (fs18)",0},
+	{0x7ffdf030+0xC,"peb.InLoadOrderModuleList",0},
+	{0x7ffdf030+0x14,"peb.InMemoryOrderModuleList",0},
+	{0x7ffdf030+0x1C,"peb.InInitializationOrderModuleList",0},
+	{0x252ea0+0x00,"ldrDataEntry.InLoadOrderLinks",0}, /* only addresses here for the [0] entry rest would spam */
+	{0x252ea0+0x08,"ldrDataEntry.InMemoryOrderLinks",0},
+	{0x252ea0+0x10,"ldrDataEntry.InInitializationOrderLinks",0},
+	{0x00253320,   "ldrDataEntry.BaseDllName",0},
+	{0,NULL,0},
+};
+
 #define CPU_FLAG_ISSET(cpu_p, fl) ((cpu_p)->eflags & (1 << (fl)))
 
 
-enum colors{ mwhite=0, mgreen, mred, myellow, mblue };
+enum colors{ mwhite=0, mgreen, mred, myellow, mblue, mpurple };
 
 void start_color(enum colors c){
-	/*
-	http://forums.fedoraforum.org/archive/index.php/t-5467.html
-		033[30m set foreground color to black
-		033[31m set foreground color to red
-		033[32m set foreground color to green
-		033[33m set foreground color to yellow
-		033[34m set foreground color to blue
-		033[35m set foreground color to magenta (purple)
-		033[36m set foreground color to cyan
-		033[37m set foreground color to white
-	*/
-	char* cc[] = {"\033[37;1m", "\033[32;1m", "\033[31;1m", "\033[33;1m", "\033[34;1m"};
+	char* cc[] = {"\033[37;1m", "\033[32;1m", "\033[31;1m", "\033[33;1m", "\033[34;1m", "\033[35;1m"};
 	printf("%s", cc[c]);
 }
-
 void end_color(void){ printf("\033[0m"); }
 void nl(void){ printf("\n"); }
 #define FLAG(fl) (1 << (fl))
@@ -150,6 +159,23 @@ void ctrl_c_handler(int arg){
 	opts.verbose = 3;             //break next instruction
 	ctrl_c_count++;               //user hit ctrl c a couple times, 
 	if(ctrl_c_count > 1) exit(0); //must want out for real.. (zeroed each step)
+}
+
+void mm_hook(uint32_t address){ //memory monitor callback function
+
+	int i=0;
+	//printf("in mm_hook addr= %x eip= %x\n", address, cpu->eip );
+
+	if(disable_mm_logging) return;
+
+	while(mm_points[i].address != 0){
+		if(address == mm_points[i].address){
+			mm_points[i].hitat = last_good_eip ; //we dont want a long long list, just last one probably only from one spot anyway..
+			break;
+		}
+		i++;
+	}
+
 }
 
 void symbol_lookup(char* symbol){
@@ -202,7 +228,17 @@ void symbol_lookup(char* symbol){
 int fulllookupAddress(int eip, char* buf255){
 
 	int numdlls=0;
+	int i=0;
 	strcpy(buf255," ");
+
+	//additional lookup for a couple addresses not in main tables..
+	while(mm_points[i].address != 0){
+		if(eip == mm_points[i].address){
+			strcpy(buf255, mm_points[i].name);
+			return 1;
+		}
+		i++;
+	}
 
 	while ( env->env.win->loaded_dlls[numdlls] != 0 )
 	{
@@ -384,7 +420,7 @@ void show_seh(void){
 	emu_memory_read_dword( mem, FS_SEGMENT_DEFAULT_OFFSET, &seh);
 	emu_memory_read_dword( mem, seh+4, &seh_handler);
 
-	printf("\tPointer to next SEH record = %08x\n\tSE handler: %08x\n", seh,seh_handler);
+	printf("\tPointer to next SEH record = %08x\n\tSE handler: %08x\n", seh, seh_handler);
 	//todo: walk chain? probably not necessary for shellcode..
 
 }
@@ -554,8 +590,10 @@ void interactive_command(struct emu *e){
 	
 	printf("\n");
 
-	struct emu_memory *mem = 0;
-	mem = emu_memory_get(e);
+	//struct emu_memory *mem = 0;  //global now
+	//mem = emu_memory_get(e);
+    
+	disable_mm_logging = true;
 
 	char *buf=0;
 	char *tmp = (char*)malloc(21);
@@ -727,6 +765,7 @@ void interactive_command(struct emu *e){
 
 	printf("\n");
 	free(tmp);
+	disable_mm_logging = false;
 
 }
 
@@ -844,7 +883,8 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "MapViewOfFile", new_user_hook_MapViewOfFile, NULL);
 	emu_env_w32_export_new_hook(env, "URLDownloadToCacheFileA", new_user_hook_URLDownloadToCacheFileA, NULL);
 	emu_env_w32_export_new_hook(env, "system", new_user_hook_system, NULL);
-	
+	emu_env_w32_export_new_hook(env, "VirtualAlloc", new_user_hook_VirtualAlloc, NULL);
+
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "CreateFileMappingA", new_user_hook_GenericStub, NULL);
@@ -928,7 +968,6 @@ int run_sc(void)
     bool firstchance = true;
 	int static_offset = CODE_OFFSET;
 	uint32_t eipsave = 0;
-	uint32_t last_good_eip=0;
 	bool parse_ok = false;
 	struct emu_vertex *last_vertex = NULL;
 	struct emu_graph *graph = NULL;
@@ -963,6 +1002,22 @@ int run_sc(void)
 	
 	//printf("writing initial stack space\n");
 	emu_memory_write_block(mem, regs[esp] - 250, stack, stacksz);
+
+
+	/*  support the topstack method to find k32 base...
+		00401003   64:8B35 18000000 MOV ESI,DWORD PTR FS:[18]
+		0040100A   AD               LODS DWORD PTR DS:[ESI]
+		0040100B   AD               LODS DWORD PTR DS:[ESI]
+		0040100C   8B40 E4          MOV EAX,DWORD PTR DS:[EAX-1C]
+	*/
+	emu_memory_write_dword(mem, FS_SEGMENT_DEFAULT_OFFSET + 0x18, FS_SEGMENT_DEFAULT_OFFSET); //point back to fs0
+	emu_memory_write_dword(mem, FS_SEGMENT_DEFAULT_OFFSET + 0x4, 0x00130000); // Top of thread's stack
+	emu_memory_write_dword(mem, 0x00130000 - 0x1c, 0x7C800abc); //technically a seh addr in k32 here set to work with the libemu mem map
+
+	/* support seh method to find k32 base */
+	emu_memory_write_dword(mem, FS_SEGMENT_DEFAULT_OFFSET + 0, 0x00130000); //address of current seh handler
+	emu_memory_write_dword(mem, 0x00130000, 0xFFFFFFFF);   //end of seh chain
+	emu_memory_write_dword(mem, 0x00130000+4, 0x7C800abc); //mock handler in k32
 
 	/*  this block no longer necessary after dll PEB modifications 1-32-11
 		401016   64A130000000                    mov eax,fs:[0x30]  ;&(PEB)
@@ -1187,7 +1242,9 @@ int run_sc(void)
 			if ( ret == -1 && firstchance && parse_ok) 
 			{				
 				firstchance = false;
+				disable_mm_logging = true;
 				ret = handle_seh(e, last_good_eip);
+				disable_mm_logging = false;
 			} 
 
 
@@ -1228,7 +1285,6 @@ int run_sc(void)
 	printf("\nstepcount %i\n",j);
 
 //--------------------------------------- END OF STEP LOOP ---------------------------------
-
 
 		//------------------ [ dump decoded buffer added dzzie ] ----------------------
 	if(opts.dump_mode && opts.file_mode){
@@ -1274,6 +1330,17 @@ int run_sc(void)
 	}
     //------------------ [ dump decoded buffer added dzzie ] ----------------------
 
+	if(opts.mem_monitor){
+		//printf("\n%s\n", mm_log);
+		printf("\nMemory Monitor Log:\n");
+		i=0;
+		while(mm_points[i].address != 0){
+			if(mm_points[i].hitat != 0){
+				printf("\t%s accessed at 0x%x\n", mm_points[i].name, mm_points[i].hitat);
+			}
+			i++;
+		}
+	}
 
 
 	if ( opts.graphfile != NULL )
@@ -1339,6 +1406,7 @@ void print_help(void)
 		{"hex", NULL,      "show hex dumps for hook reads/writes"},
 		{"findsc", NULL ,  "Scans file for possible shellcode buffers (getpc mode)"},
 		{"foff", "hexnum" ,"starts execution at file offset"},
+		{"mm", NULL,       "enables Memory Monitor to log access to key addresses."},
 		{"S", "< file.sc", "read shellcode/buffer from stdin"},
 		{"f", "fpath"    , "load shellcode from file specified."},
 		{"o", "hexnum"   , "base offset to use (default: 0x401000)"},
@@ -1410,6 +1478,7 @@ void parse_opts(int argc, char* argv[] ){
 	opts.file_mode = false;
 	opts.dump_mode = false;
 	opts.getpc_mode = false;
+	opts.mem_monitor = false;
 
 
 	for(i=1; i < argc; i++){
@@ -1430,6 +1499,7 @@ void parse_opts(int argc, char* argv[] ){
 		if(sl==5 && strstr(argv[i],"/vvvv") > 0 ) opts.verbose = 4;
 		if(sl==4 && strstr(argv[i],"/vvv") > 0 )  opts.verbose = 3;
 		if(sl==3 && strstr(argv[i],"/vv")  > 0 )  opts.verbose = 2;
+		if(sl==3 && strstr(argv[i],"/mm")  > 0 )  opts.mem_monitor = true;
 		if(strstr(buf,"/d") > 0 ) opts.dump_mode = true;
 		if(sl==2 && strstr(buf,"/h") > 0 ) print_help();
 		if(strstr(buf,"/S") > 0 ) opts.from_stdin = true;
@@ -1630,6 +1700,7 @@ void loadsc(void){
 int main(int argc, char *argv[])
 {
 	static struct termios oldt;
+	int i=0;
 
 	tcgetattr( STDIN_FILENO, &oldt);
 	orgt = oldt;
@@ -1643,6 +1714,15 @@ int main(int argc, char *argv[])
 	
 	parse_opts(argc, argv);
 	loadsc();
+
+	if(opts.mem_monitor){
+		printf("Memory monitor enabled..\n");
+		//asprintf(&mm_log, "Memory Monitor Log:\n");
+		emu_memory_set_access_monitor((uint32_t)mm_hook);
+		while(mm_points[i].address != 0){
+			emu_memory_add_monitor_point(mm_points[i++].address);
+		}
+	}
 
 	if(opts.offset > 0){
 		printf("Execution starts at file offset 0x%04x (start byte: %X)\n", opts.offset, opts.scode[opts.offset]);

@@ -70,6 +70,10 @@ uint32_t emu_memory_get_usage(struct emu_memory *m);
 void emu_memory_mode_ro(struct emu_memory *m);
 void emu_memory_mode_rw(struct emu_memory *m);
 
+/* memory access hook -dzzie */
+void emu_memory_set_access_monitor(uint32_t lpfnCallback);
+void emu_memory_add_monitor_point(uint32_t address);
+//----------------------------
 
 #define MEM_BYTE_READ(cpu_p, addr, data_p) \
  { int32_t ret = emu_memory_read_byte((cpu_p)->mem, addr, data_p); \

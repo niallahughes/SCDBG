@@ -23,6 +23,7 @@ struct run_time_options
 	bool show_hexdumps;
 	char* break_at_instr;
 	bool  getpc_mode;
+	bool  mem_monitor;
 
 	struct 
 	{
@@ -36,6 +37,13 @@ struct run_time_options
 
 };
 
+struct mm_point{
+	uint32_t address;
+	char* name;
+	uint32_t hitat;
+};
+
+extern struct mm_point mm_points[];
 extern struct run_time_options opts;
 
 bool cmp(void *a, void *b);

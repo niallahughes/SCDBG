@@ -99,9 +99,11 @@
 #include <ctype.h>
 
 extern int CODE_OFFSET;
+extern uint32_t FS_SEGMENT_DEFAULT_OFFSET;
 extern void hexdump(unsigned char*, int);
 extern struct emu_memory *mem;
 extern struct emu_cpu *cpu;    //these two are global in main code
+extern bool disable_mm_logging;
 
 //by the time our user call is called, the args have already been popped off the stack.
 //in r/t that just means that esp has been adjusted and cleaned up for function to 
@@ -1190,6 +1192,13 @@ lpFilter
 
 	printf("%x\tSetUnhandledExceptionFilter(%x)\n",retaddr,lpfilter);
 
+	uint32_t seh = 0;
+	disable_mm_logging = true;
+	if(emu_memory_read_dword( mem, FS_SEGMENT_DEFAULT_OFFSET, &seh) != -1){
+		emu_memory_write_dword( mem, seh+4, lpfilter);
+	}
+	disable_mm_logging = false;
+
 	return 0;
 
 }
@@ -1802,6 +1811,53 @@ int32_t	new_user_hook_system(struct emu_env *env, struct emu_env_hook *hook)
 	return 1;
 }
 
+int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	LPVOID WINAPI VirtualAlloc(
+	  __in_opt  LPVOID lpAddress,
+	  __in      SIZE_T dwSize,
+	  __in      DWORD flAllocationType,
+	  __in      DWORD flProtect
+);
+
+
+*/
+	uint32_t address;
+	POP_DWORD(c, &address);
+
+	uint32_t size;
+	POP_DWORD(c, &size);
+
+	uint32_t atype;
+	POP_DWORD(c, &atype);
+
+	uint32_t flProtect;
+	POP_DWORD(c, &flProtect);
+
+	uint32_t baseMemAddress = 0x666666;
+
+	if(size > 0 && size < 9000){
+		void *buf = malloc(size);
+		memset(buf,0,size);
+		emu_memory_write_block(mem,baseMemAddress,buf, size);
+		printf("%x\tVirtualAlloc(base=%x , sz=%x) = %x\n", eip_save, address, size, baseMemAddress);
+		free(buf);
+	}else{
+		printf("%x\tVirtualAlloc(sz=%x) (Ignored size out of range)\n", eip_save, size);
+	}
+
+	emu_cpu_reg32_set(c, eax, baseMemAddress);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
 
 
 

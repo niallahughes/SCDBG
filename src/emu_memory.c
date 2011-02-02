@@ -34,7 +34,7 @@
 #include "emu/emu_log.h"
 #include "emu/emu_memory.h"
 #include "emu/emu_string.h"
-
+#include "emu/emu_hashtable.h"
 
 #define PAGE_BITS 12 /* size of one page, 2^12 = 4096 */
 #define PAGESET_BITS 10 /* number of pages in one pageset, 2^10 = 1024 */
@@ -49,7 +49,12 @@
 
 #define FS_SEGMENT_DEFAULT_OFFSET 0x7ffdf000
 
-
+//------------  dzzie -------------- experiment to see how useful this is...
+typedef void (*mm_callback)(uint32_t);
+mm_callback mem_monitor_callback=0;
+int mm_points[256];
+int mm_point_cnt=0;
+//----------------------------------
 
 struct emu_memory
 {
@@ -257,11 +262,30 @@ static inline void *translate_addr(struct emu_memory *em, uint32_t addr)
 	return NULL;
 }
 
+void mm_check(uint32_t addr, uint32_t len){
+	
+	int i=0;
+
+	if( (int)mem_monitor_callback != 0){
+
+		for(i=0; i<mm_point_cnt; i++){
+			if( mm_points[i] >= addr && mm_points[i] <= (addr + len) ){
+			//if( mm_points[i] == addr ){
+				mem_monitor_callback(addr);
+			}
+		}
+
+	}
+
+}
+
 int32_t emu_memory_read_byte(struct emu_memory *m, uint32_t addr, uint8_t *byte)
 {
 	addr += m->segment_offset;
 	void *address = translate_addr(m, addr);
 	
+	mm_check(addr,1);
+
 	if( address == NULL )
 	{
 		emu_errno_set(m->emu, EFAULT);
@@ -309,6 +333,8 @@ int32_t emu_memory_read_block(struct emu_memory *m, uint32_t addr, void *dest, s
 	uint32_t oaddr = addr; /* save original addr for recursive call */
 	addr += m->segment_offset;
 	
+	mm_check(addr,len);
+
 	void *address = translate_addr(m, addr);
 	
 	if( address == NULL )
@@ -538,5 +564,17 @@ void emu_memory_mode_ro(struct emu_memory *m)
 void emu_memory_mode_rw(struct emu_memory *m)
 {
 	m->read_only_access = false;
+}
+
+void emu_memory_set_access_monitor(uint32_t lpfnCallback){
+	mem_monitor_callback = (mm_callback)lpfnCallback;
+}
+
+void emu_memory_add_monitor_point(uint32_t address){
+	if(mm_point_cnt == 255){
+		printf("All available monitor points full...\n");
+		return;
+	}
+	mm_points[mm_point_cnt++] = address;
 }
 

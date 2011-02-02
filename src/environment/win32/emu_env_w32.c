@@ -281,7 +281,7 @@ struct emu_env_w32 *emu_env_w32_new(struct emu *e)
 	{
 		/* 0x00 */ LIST_ENTRY InLoadOrderLinks;
 		/* 0x08 */ LIST_ENTRY InMemoryOrderLinks;
-		/* 0x0f */ LIST_ENTRY InInitializationOrderLinks;
+		/* 0x10 */ LIST_ENTRY InInitializationOrderLinks;
 		/* 0x18 */ uint32_t DllBase;
 		/* 0x1c */ uint32_t EntryPoint;
 		/* 0x1f */ uint32_t Reserved;           
