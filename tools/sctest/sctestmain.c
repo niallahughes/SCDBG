@@ -111,7 +111,10 @@ struct emu_cpu *cpu = 0;
 struct emu_memory *mem = 0;
 struct emu_env *env = 0;
 uint32_t last_good_eip=0;
+uint32_t previous_eip=0;
 bool disable_mm_logging = false;
+int lastExceptionHandler=0;
+int exception_count=0;
 
 char *regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
 
@@ -145,9 +148,10 @@ enum colors{ mwhite=0, mgreen, mred, myellow, mblue, mpurple };
 
 void start_color(enum colors c){
 	char* cc[] = {"\033[37;1m", "\033[32;1m", "\033[31;1m", "\033[33;1m", "\033[34;1m", "\033[35;1m"};
+	if(opts.no_color) return;
 	printf("%s", cc[c]);
 }
-void end_color(void){ printf("\033[0m"); }
+void end_color(void){ if(!opts.no_color) printf("\033[0m"); }
 void nl(void){ printf("\n"); }
 #define FLAG(fl) (1 << (fl))
 void restore_terminal(int arg)    { tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
@@ -378,7 +382,10 @@ void hexdump(unsigned char* str, int len){
 //---------------------------------------------------------
 
 
-
+uint32_t get_instr_length(uint32_t va){
+	char disasm[200];
+	return emu_disasm_addr(cpu, va, disasm);  
+}
 
 int disasm_addr(struct emu *e, int va){  //arbitrary offset
 	
@@ -570,7 +577,7 @@ void show_debugshell_help(void){
 			"\tk - show stack\n"
 			"\ti - break at instruction (scans disasm for next string match)\n"
 			"\tf - dereF registers (show any common api addresses in regs)\n"  
-			"\t.so - step over (macro for exec return v 0\n" 
+			"\to - step over\n" 
 			"\t.lp - lookup - get symbol for address\n"  
 			"\t.pl - reverse lookup - get address for symbol\n"  
 			"\t.seh - shows current value at fs[0]\n"
@@ -582,14 +589,10 @@ void show_debugshell_help(void){
 		  );
 }
 
-//we can build this out to be more as we need it..not gonna get crazy off the bat...
 void interactive_command(struct emu *e){
 
 	
 	printf("\n");
-
-	//struct emu_memory *mem = 0;  //global now
-	//mem = emu_memory_get(e);
     
 	disable_mm_logging = true;
 
@@ -601,14 +604,13 @@ void interactive_command(struct emu *e){
 	unsigned int i=0;
 	int bytes_read=0;
 	char x[2]; x[1]=0;
-    //uint8_t byte = 0;
+    char c=0;;
 
 	while(1){
 
-		printf("dbg> ");
+		if( (c >= 'a' || c==0) && c != 0x7e) printf("dbg> "); //stop arrow and function key weirdness...
 
-		char c = getchar();
-		//if(c!='.') nl();
+		c = getchar();		 
 
 		if(c=='q'){ opts.steps =0; break; }
 		if(c=='g'){ opts.verbose =0; break; }
@@ -619,17 +621,25 @@ void interactive_command(struct emu *e){
 		if(c=='c'){ opts.cur_step = 0; printf("Step counter has been zeroed\n"); }
 		if(c=='t') opts.time_delay = read_int("Enter time delay (1000ms = 1sec)", tmp);
 		if(c=='r'){ opts.exec_till_ret = true; printf("Exec till ret set. Set verbosity < 3 and step.\n"); }
+		
+		if(c=='o'){
+			if(previous_eip < CODE_OFFSET && previous_eip > (CODE_OFFSET + opts.size)) previous_eip = last_good_eip;
+			if(previous_eip < CODE_OFFSET && previous_eip > (CODE_OFFSET + opts.size) ) previous_eip = cpu->eip ;
+			if(previous_eip >= CODE_OFFSET && previous_eip <= (CODE_OFFSET + opts.size) ){
+				opts.step_over_bp = previous_eip + get_instr_length(previous_eip);
+				opts.verbose = 0;
+				start_color(myellow);
+				printf("Step over will break at %x\n", opts.step_over_bp);
+				end_color();
+				break;
+			}
+		}
 
 		if(c=='.'){  //dot commands
 			i = read_string("",tmp);
 			if(i>0){
 				if(strcmp(tmp,"seh")==0) show_seh();
 				if(strcmp(tmp,"savemem")==0) savemem();
-				if(strcmp(tmp,"so")==0){
-					opts.exec_till_ret = true;
-					opts.verbose = 0;
-					break;
-				}
 				if(strcmp(tmp,"pl")==0){
 					i = read_string("Enter symbol to lookup address for: ", tmp);
 					symbol_lookup(tmp);
@@ -918,12 +928,24 @@ int handle_seh(struct emu *e,int last_good_eip){
 		int regs[8];
 	    uint32_t seh = 0;
 		uint32_t seh_handler = 0;
+		const int default_handler = 0x7c800abc;
 		struct emu_memory *m = emu_memory_get(e);
 		
 		//lets check and see if an exception handler has been set
 		if(emu_memory_read_dword( m, FS_SEGMENT_DEFAULT_OFFSET, &seh) == -1) return -1;
 		if(emu_memory_read_dword( m, seh+4, &seh_handler) == -1) return -1;
-		if(seh_handler == 0) return -1; //better to check to see if code section huh?
+		if(seh_handler == 0 || seh_handler == default_handler) return -1; //better to check to see if code section huh?
+
+		//if( (seh_handler < CODE_OFFSET) || (seh_handler > (CODE_OFFSET + opts.size)) ) return -1; //wait what about virtual allocs?
+
+		if( seh_handler == lastExceptionHandler){
+			exception_count++;
+			if(seh == 0xFFFFFFFF) return -1;
+			if(exception_count >= 2) return -1;
+		}else{
+			exception_count =0; //really here is where we should walk the chain...
+			lastExceptionHandler = seh_handler;
+		}
 
 		start_color(myellow);
 		printf("\n%x\tException caught SEH=0x%x (seh foffset:%x)\n", last_good_eip, seh_handler, seh_handler - CODE_OFFSET);
@@ -1073,6 +1095,12 @@ int run_sc(void)
 			opts.log_after_step = 0;
 		}
 
+		if(emu_cpu_get(e)->eip  == opts.step_over_bp)
+		{
+			opts.verbose = 3;
+			opts.step_over_bp = -1;
+		}
+
 		if( j == opts.log_after_step && opts.log_after_step > 0 )
 		{
 			opts.verbose = opts.verbosity_after;
@@ -1137,6 +1165,11 @@ int run_sc(void)
 
 			if ( hook->hook.win->fnhook == NULL )
 			{
+				//if we had a listing of esp size for each api, we wouldnt have to bail
+				//on this condition and see if it would just continue on some more..
+				//not perfect but might be an easy way to get a little further and not have
+				//to implement literally every api used. (like sleep or gettickcount would be fine)
+				//maybe scan the disasm of the dll looking for stack adjustments? -dzzie
 				printf("unhooked call to %s\n", hook->hook.win->fnname);
 				break;
 			}
@@ -1208,6 +1241,7 @@ int run_sc(void)
 
 						if(ret != -1)  //step was ok
 						{ 
+							previous_eip = last_good_eip;
 							last_good_eip = emu_cpu_eip_get(emu_cpu_get(e)); //used in case of seh exception
 							if(opts.exec_till_ret == true){
 								emu_disasm_addr(emu_cpu_get(e),last_good_eip,disasm);
@@ -1329,7 +1363,7 @@ int run_sc(void)
 
 		}
 	}
-    //------------------ [ dump decoded buffer added dzzie ] ----------------------
+    //------------------ [ /dump decoded buffer ] ----------------------
 
 	if(opts.mem_monitor){
 		printf("\nMemory Monitor Log:\n");
@@ -1407,6 +1441,7 @@ void print_help(void)
 		{"findsc", NULL ,  "Scans file for possible shellcode buffers (getpc mode)"},
 		{"foff", "hexnum" ,"starts execution at file offset"},
 		{"mm", NULL,       "enables Memory Monitor to log access to key addresses."},
+		{"nc", NULL,       "no color (if using sending output to other apps)"},
 		{"S", "< file.sc", "read shellcode/buffer from stdin"},
 		{"f", "fpath"    , "load shellcode from file specified."},
 		{"o", "hexnum"   , "base offset to use (default: 0x401000)"},
@@ -1479,7 +1514,7 @@ void parse_opts(int argc, char* argv[] ){
 	opts.dump_mode = false;
 	opts.getpc_mode = false;
 	opts.mem_monitor = false;
-
+	opts.no_color = false;
 
 	for(i=1; i < argc; i++){
 					
@@ -1494,6 +1529,7 @@ void parse_opts(int argc, char* argv[] ){
 		if(strstr(buf,"/a") > 0 ) opts.adjust_offsets = true ;
 		if(strstr(buf,"/i") > 0 ) opts.interactive_hooks = 1;
 		if(strstr(buf,"/v") > 0 ) opts.verbose++;	
+		if(sl==3 && strstr(argv[i],"/nc") > 0 )   opts.no_color = true;
 		if(sl==4 && strstr(argv[i],"/hex") > 0 )  opts.show_hexdumps = true;
 		if(sl==7 && strstr(argv[i],"/findsc") > 0 ) opts.getpc_mode = true;
 		if(sl==5 && strstr(argv[i],"/vvvv") > 0 ) opts.verbose = 4;

@@ -365,6 +365,15 @@ uint32_t user_hook_WaitForSingleObject(struct emu_env *env, struct emu_env_hook 
 
 	printf("%x\tWaitForSingleObject(h=%x)\n",retaddr, (int)hHandle);
 
+	if(opts.interactive_hooks){
+		int status;
+		while(1)
+		{
+			if (waitpid(hHandle, &status, WNOHANG) != 0) break;
+			sleep(1);
+		}
+	}
+
 	return 0;
 }
 
@@ -1873,7 +1882,8 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 	return 0;
 }
 
-
+//need to find a clean way to have these stubs handle multiple api..this is a start anyway..
+//this one can handle logging of 1 or 2 string args..
 int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hook *hook)
 {
 

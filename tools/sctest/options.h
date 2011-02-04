@@ -24,6 +24,8 @@ struct run_time_options
 	char* break_at_instr;
 	bool  getpc_mode;
 	bool  mem_monitor;
+	bool  no_color;
+	uint32_t step_over_bp;
 
 	struct 
 	{
