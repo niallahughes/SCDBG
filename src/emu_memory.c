@@ -395,6 +395,19 @@ int32_t emu_memory_write_byte(struct emu_memory *m, uint32_t addr, uint8_t byte)
 
 	addr += m->segment_offset;
 
+	/*
+	if(addr==0){
+		printf("Someone is trying to writebyte mem 0?\n");
+		asm __volatile__ (".byte 0xCC"); 
+	}*/
+
+	if( addr < 0x1000 ) //there are some memory sections that should not support writes...dzzie
+	{
+		emu_errno_set(m->emu, EFAULT);
+		emu_strerror_set(m->emu, "error accessing 0x%08x not mapped\n", addr);
+		return -1;
+	}
+
 	void *address = translate_addr(m, addr);
 	
 	if( address == NULL )
@@ -451,6 +464,18 @@ int32_t emu_memory_write_block(struct emu_memory *m, uint32_t addr, void *src, s
 
 	uint32_t oaddr = addr; /* save original addr for recursive call */
 	addr += m->segment_offset;
+
+	/*if(addr==0){ //it was an opcode writing 0 that created memory at 0..
+		printf("Someone is trying to writeblock mem 0?\n");
+		asm __volatile__ (".byte 0xCC"); 
+	}*/
+
+	if( addr < 0x1000 ) //there are some memory sections that should not support writes...dzzie
+	{                   //this is still overly permissive..should we require allocs? to much to change..
+		emu_errno_set(m->emu, EFAULT);
+		emu_strerror_set(m->emu, "error accessing 0x%08x not mapped\n", addr);
+		return -1;
+	}
 
 	void *address = translate_addr(m, addr);
 

@@ -991,18 +991,13 @@ uint32_t user_hook_GetTickCount(struct emu_env *env, struct emu_env_hook *hook, 
 
 }
 
-
+ 
 uint32_t user_hook_LoadLibraryA(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
 	//printf("Hook me Captain Cook!\n");
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-8);
-
-/*
-lpLibName
-);
-*/
 
 	va_list vl;
 	va_start(vl, hook);
@@ -1015,6 +1010,7 @@ lpLibName
 	return 0;
 
 }
+
 
 
 uint32_t user_hook__lcreat(struct emu_env *env, struct emu_env_hook *hook, ...)
@@ -1574,7 +1570,7 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	  __out  LPDWORD lpdwNumberOfBytesRead
 	);
 
-
+    ZwTerminateProcess, ZwTerminateThread, each 2 args
 */
 
 	int arg_count=0;
@@ -1591,6 +1587,12 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	if(strcmp(func, "GetFileSize") == 0){
 		log_val = get_ret(env,0); //handle
 		arg_count = 2;
+	}
+
+	if(strcmp(func, "ZwTerminateProcess") == 0 || strcmp(func, "ZwTerminateThread") == 0){
+		log_val = get_ret(env,0); //handle
+		arg_count = 2;
+		opts.steps =0;
 	}
 
 	if(strcmp(func, "InternetReadFile") == 0){
@@ -1692,7 +1694,7 @@ int32_t	new_user_hook_GlobalAlloc(struct emu_env *env, struct emu_env_hook *hook
 	uint32_t size;
 	POP_DWORD(c, &size);
 
-	uint32_t baseMemAddress = 0x666666;
+	uint32_t baseMemAddress = 0x60000; //easier to calculate offsets from...
 
 	if(size > 0 && size < 9000){
 		void *buf = malloc(size);
@@ -1864,7 +1866,7 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 	uint32_t flProtect;
 	POP_DWORD(c, &flProtect);
 
-	uint32_t baseMemAddress = 0x666666;
+	uint32_t baseMemAddress = 0x60000; //easier to calc offsets from..
 
 	if(size < 9000){
 		printf("%x\tVirtualAlloc(base=%x , sz=%x) = %x\n", eip_save, address, size, baseMemAddress);
@@ -1967,8 +1969,5 @@ int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hoo
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
 }
-
-
-
 
 

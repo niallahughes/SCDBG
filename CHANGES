@@ -1,5 +1,12 @@
 		Changelog for libemu
 
+2.5.11
+    dll - mem addresses < 0x1000 no longer writable
+		  added support for ntdll..
+	exe - added hooks for ZwTerminateThread, ZwTerminateProcess
+		- experimented with GlobalAlloc shellcode that hooks UnhandledExceptionFilter (fail)
+		- misc cleanups/tweaks
+
 2.2.11
 	dll - added support for wininet.dll
 	exe - added hooks InternetOpenA, InternetOpenUrlA, InternetReadFile, VirtualAlloc

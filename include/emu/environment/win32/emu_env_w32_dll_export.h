@@ -56,5 +56,12 @@ extern struct emu_env_w32_dll_export ws2_32_exports[];
 extern struct emu_env_w32_dll_export wininet_exports[];
 extern struct emu_env_w32_dll_export urlmon_exports[];
 
+//dzzie below here
+extern struct emu_env_w32_dll_export ntdll_exports[];
+extern struct emu_env_w32_dll_export user32_exports[];
+extern struct emu_env_w32_dll_export shell32_exports[];
+
+
+
 
 #endif

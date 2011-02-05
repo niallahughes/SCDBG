@@ -27,11 +27,25 @@
 
 /*  this source has been modified from original see changelog 
 
-	TODO: 
-		  support unhandledexceptionfilter w/seh (implement as req)
+	TODO: dump allocs with -d options
+		  support more than one alloc offset? (hardcoded right now)
+		  support unhandledexceptionfilter w/seh (implement as req) - probably not practical..
 		  display bug, on breakpoint and on error disasm shown twice
 		  add string deref for pointers in stack dump, deref regs and dword dump?
 		  opcodes A9 and 2F could use supported (pretty easy ones too i think)
+
+		  [0] should return memory not mapped error...why doesnt it? (-1 too)
+			answer: any call to write memory created memory if it didnt exist.
+			        so only mem reads of non-existant addresses triggered not mapped
+					errors. I put a very basic restriction in so no address < 0x1000
+					will do this..this will support shellcode which expect to trigger errors
+					with a write to 0 or the execute of code which is all 0000 add [eax], al
+					now leads to immediate crash as expected. (and confusing if it doesnt!)
+
+		  how/why/where are loadlibraryA opcodes being written to memory?
+		     answer: looks like entire .text section with imports was included.
+			         (I have just been using the mz and the export table when i add a dll)
+
 
 */
 #include "../config.h"
@@ -138,6 +152,7 @@ struct mm_point mm_points[] =
 	{0x252ea0+0x08,"ldrDataEntry.InMemoryOrderLinks",0},
 	{0x252ea0+0x10,"ldrDataEntry.InInitializationOrderLinks",0},
 	{0x00253320,   "ldrDataEntry.BaseDllName",0},
+	{0x7c862e62,   "UnhandledExceptionFilter",0},
 	{0,NULL,0},
 };
 
@@ -257,22 +272,12 @@ int fulllookupAddress(int eip, char* buf255){
 			      eip < env->env.win->loaded_dlls[numdlls]->baseaddr + 
 				            env->env.win->loaded_dlls[numdlls]->imagesize )
 		{
-			
-			//printf("Address %08x is within %s\n",eip, env->env.win->loaded_dlls[numdlls]->dllname);
-
 			struct emu_env_w32_dll *dll = env->env.win->loaded_dlls[numdlls];
-
 			struct emu_hashtable_item *ehi = emu_hashtable_search(dll->exports_by_fnptr, (void *)(uintptr_t)(eip - dll->baseaddr));
 
-			if ( ehi == 0 )
-			{
-				//printf("No specific lookup found for %08x\n", eip);
-				return 0;
-			}
+			if ( ehi == 0 )	return 0;
 
 			struct emu_env_hook *hook = (struct emu_env_hook *)ehi->value;
-			//printf("Address found: %x = %s\n", eip, hook->hook.win->fnname);
-			//printf("%s", hook->hook.win->fnname);
 			strncpy(buf255, hook->hook.win->fnname, 254);
 			return 1;
 
@@ -393,6 +398,7 @@ int disasm_addr(struct emu *e, int va){  //arbitrary offset
 	char disasm[200];
 	struct emu_cpu *cpu = emu_cpu_get(e);
 	
+	uint32_t retAddr=0;
 	uint32_t m_eip     = va;
 	instr_len = emu_disasm_addr(cpu, m_eip, disasm); 
 	
@@ -407,7 +413,16 @@ int disasm_addr(struct emu *e, int va){  //arbitrary offset
 			printf("%x   %s\n", m_eip, disasm);
 		}
 	}else{
-		printf("%x   %s\t\t step: %d  foffset: %x\n", m_eip, disasm, opts.cur_step,  foffset);
+		int xx_ret = (int)strstr(disasm,"retn 0x");
+		if(xx_ret == 0 && strstr(disasm,"ret") > 0){ //to do this right we have to support retn 0x too...
+			emu_memory_read_dword(mem, cpu->reg[esp], &retAddr);
+			printf("%x   %s\t\t step: %d  foffset: %x", m_eip, disasm, opts.cur_step,  foffset);
+			start_color(mpurple);
+			printf(" ret=%x\n", retAddr);
+			end_color();
+		}else{
+			printf("%x   %s\t\t step: %d  foffset: %x\n", m_eip, disasm, opts.cur_step,  foffset);
+		}
 	}
 	end_color();
 
@@ -609,6 +624,7 @@ void interactive_command(struct emu *e){
 	while(1){
 
 		if( (c >= 'a' || c==0) && c != 0x7e) printf("dbg> "); //stop arrow and function key weirdness...
+		if( c == '.') printf("dbg> ");
 
 		c = getchar();		 
 
@@ -620,18 +636,27 @@ void interactive_command(struct emu *e){
 		if(c=='k'){ nl(); show_stack(); nl();}
 		if(c=='c'){ opts.cur_step = 0; printf("Step counter has been zeroed\n"); }
 		if(c=='t') opts.time_delay = read_int("Enter time delay (1000ms = 1sec)", tmp);
-		if(c=='r'){ opts.exec_till_ret = true; printf("Exec till ret set. Set verbosity < 3 and step.\n"); }
+
+		if(c=='r'){ 
+			opts.exec_till_ret = true; 
+			opts.verbose =0;
+			break;
+			//printf("Exec till ret set. Set verbosity < 3 and step.\n"); //annoying rare i want to log it anyway...
+		}
 		
 		if(c=='o'){
-			if(previous_eip < CODE_OFFSET && previous_eip > (CODE_OFFSET + opts.size)) previous_eip = last_good_eip;
-			if(previous_eip < CODE_OFFSET && previous_eip > (CODE_OFFSET + opts.size) ) previous_eip = cpu->eip ;
+			if(previous_eip < CODE_OFFSET || previous_eip > (CODE_OFFSET + opts.size)) previous_eip = last_good_eip;
+			if(previous_eip < CODE_OFFSET || previous_eip > (CODE_OFFSET + opts.size) ) previous_eip = cpu->eip ;
 			if(previous_eip >= CODE_OFFSET && previous_eip <= (CODE_OFFSET + opts.size) ){
 				opts.step_over_bp = previous_eip + get_instr_length(previous_eip);
 				opts.verbose = 0;
-				start_color(myellow);
+				/*start_color(myellow);
 				printf("Step over will break at %x\n", opts.step_over_bp);
-				end_color();
+				end_color();*/
 				break;
+			}
+			else{
+				printf("Could not determine next address? lgip = %x, cureip=%x\n", last_good_eip , cpu->eip);
 			}
 		}
 
@@ -828,6 +853,9 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	   called emu_env_w32_export_new_hook which allows application developers to set
 	   primary hooks for api functions which are unimplemented by the dll itself. 
 	   
+       (design seems to say that dll is used as an application/plugin in itself, and use as an app
+	   library is secondary)
+
 	   If you want to use this note that the function prototype is slightly different, 
 	   and you will now be the one responsible for the emu stack cleanup and resetting
 	   eip to return address at completion of your function. This mod allows for the development
@@ -841,6 +869,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_load_dll(env->env.win,"urlmon.dll");
 	emu_env_w32_load_dll(env->env.win,"ws2_32.dll");
 	emu_env_w32_load_dll(env->env.win,"wininet.dll");
+	emu_env_w32_load_dll(env->env.win,"ntdll.dll");
 
 	emu_env_w32_export_hook(env, "ExitProcess", user_hook_ExitProcess, NULL);
 	emu_env_w32_export_hook(env, "ExitThread", user_hook_ExitThread, NULL);
@@ -900,11 +929,31 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "InternetOpenA", new_user_hook_GenericStub2String, NULL);
 	emu_env_w32_export_new_hook(env, "InternetOpenUrlA", new_user_hook_GenericStub2String, NULL);
 	emu_env_w32_export_new_hook(env, "InternetReadFile", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "ZwTerminateProcess", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "ZwTerminateThread", new_user_hook_GenericStub, NULL);
 
 
 }
 
+/* we just cant really support every shellcode can we :( */
+int handle_UnhandledExceptionFilter(void){
+    //ret 0 = handled, ret -1 = unhandled
 
+	unsigned char b;
+	emu_memory_read_byte(mem, 0x7c862e62, &b);
+	if(b != 0){ //code has been written here..so we handle it..
+		start_color(myellow);
+		printf("\n%x\tException caught w/ UnhandledExceptionFilter\n", last_good_eip);
+		end_color();
+		emu_cpu_eip_set(emu_cpu_get(e), 0x7c862e62);
+		cpu->reg[esp] += 8;
+		return 0;
+	}
+
+	return -1;
+}
+/**/
+		
 
 /* 
 	FS:[00000000]=[7FFDF000]=0012FF98
@@ -920,7 +969,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	
 	seems to work, done from observed tested in olly - dzzie
 
-    todo: should we also check the UnhandledExceptionFilter here if its set?
+    todo: should we also check the UnhandledExceptionFilter (0x7c862e62) here if its set?
 */
 int handle_seh(struct emu *e,int last_good_eip){
 			
@@ -934,18 +983,19 @@ int handle_seh(struct emu *e,int last_good_eip){
 		//lets check and see if an exception handler has been set
 		if(emu_memory_read_dword( m, FS_SEGMENT_DEFAULT_OFFSET, &seh) == -1) return -1;
 		if(emu_memory_read_dword( m, seh+4, &seh_handler) == -1) return -1;
-		if(seh_handler == 0 || seh_handler == default_handler) return -1; //better to check to see if code section huh?
+		if(seh_handler == 0) return -1; //better to check to see if code section huh?
+		if(seh_handler == default_handler) return -1; //not a real one dummy we put in place..
 
-		//if( (seh_handler < CODE_OFFSET) || (seh_handler > (CODE_OFFSET + opts.size)) ) return -1; //wait what about virtual allocs?
-
+		 
 		if( seh_handler == lastExceptionHandler){
-			exception_count++;
-			if(seh == 0xFFFFFFFF) return -1;
+			exception_count++; //really here is where we should walk the chain...
 			if(exception_count >= 2) return -1;
+			//if(seh == 0xFFFFFFFF) return -1;
 		}else{
-			exception_count =0; //really here is where we should walk the chain...
+			exception_count=0; 
 			lastExceptionHandler = seh_handler;
 		}
+		 
 
 		start_color(myellow);
 		printf("\n%x\tException caught SEH=0x%x (seh foffset:%x)\n", last_good_eip, seh_handler, seh_handler - CODE_OFFSET);
@@ -1042,21 +1092,12 @@ int run_sc(void)
 	emu_memory_write_dword(mem, 0x00130000, 0xFFFFFFFF);   //end of seh chain
 	emu_memory_write_dword(mem, 0x00130000+4, 0x7C800abc); //mock handler in k32
 
-	/*  this block no longer necessary after dll PEB modifications 1-32-11
-		401016   64A130000000                    mov eax,fs:[0x30]  ;&(PEB)
-		40101c   8B400C                          mov eax,[eax+0xc]  ;PEB->Ldr
-		40101f   8B701C                          mov esi,[eax+0x1c] ;PEB->Ldr.InInitOrder 
-		401022   AD                              lodsd              ;PEB->Ldr.InInitOrder.flink (kernel32.dll)
-		401023   8B6820                          mov ebp,[eax+0x20]  InInitOrder[X].module_name (unicode)
-		401026   807D0C33                        cmp byte [ebp+0xc],0x33   
-	
-	unsigned char uni_k32[23] = {
-			0x6B, 0x00, 0x65, 0x00, 0x72, 0x00, 0x6E, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x33, 0x00, 0x32, 0x00, 
-			0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C
-	};
-	emu_memory_write_block(mem, 0x252020+0x40, uni_k32, 23 ); //embed the data
-	emu_memory_write_dword(mem, 0x252020+0x20, 0x252020+0x40); //embed the pointer
-	*/
+	/* support writes to UnhandledExceptionFilter, MessaegBeep */
+	emu_memory_write_dword(mem, 0x7c862e62, 0);   //uef
+	emu_memory_write_dword(mem, 0x7c862e62+4, 0);
+	emu_memory_write_dword(mem, 0x7e431f7b, 0);   //messaegbeep
+	emu_memory_write_dword(mem, 0x7e431f7b+4, 0);
+	/**/
 
 	//some of the shellcodes look for hooks set on some API, lets add some mem so it exists to check
     emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile
@@ -1095,7 +1136,7 @@ int run_sc(void)
 			opts.log_after_step = 0;
 		}
 
-		if(emu_cpu_get(e)->eip  == opts.step_over_bp)
+		if(emu_cpu_get(e)->eip  == opts.step_over_bp && cpu->eip != 0)
 		{
 			opts.verbose = 3;
 			opts.step_over_bp = -1;
@@ -1135,7 +1176,7 @@ int run_sc(void)
 
 		hook = emu_env_w32_eip_check(env);
 
-		if ( hook != NULL )
+		if ( hook != NULL  && cpu->eip != 0x7c862e62 && cpu->eip != 0x7e431f7b ) //ignore UnhandledExceptionFilter , messagebeep
 		{					
 			if ( opts.graphfile != NULL )
 			{
@@ -1279,6 +1320,9 @@ int run_sc(void)
 				firstchance = false;
 				disable_mm_logging = true;
 				ret = handle_seh(e, last_good_eip);
+				if(ret == -1) { //not handled by seh
+					//ret = handle_UnhandledExceptionFilter();
+				}
 				disable_mm_logging = false;
 			} 
 
@@ -1288,9 +1332,10 @@ int run_sc(void)
 				if(opts.verbose < opts.verbosity_onerr)	opts.verbose = opts.verbosity_onerr; 
 
 				start_color(mred);
-				printf("%x\t %s", emu_cpu_eip_get(emu_cpu_get(e)), emu_strerror(e)); 
+				printf("%x\t %s", last_good_eip, emu_strerror(e)); 
 				end_color();
 
+				cpu->eip = last_good_eip;
 				debugCPU(e,true);
 				
 				break;
@@ -1453,6 +1498,7 @@ void print_help(void)
 		{"t", "int"	     , "time to delay (ms) between steps when v=1 or 2"},
 		{"h",  NULL		 , "show this help"},
 		{"bp", "hexnum"  , "set breakpoint (shortcut for -laa <hexaddr> -vvv)"},
+		{"bs", "int"     , "break on step (shortcut for -las <int> -vvv)"},
 		{"a",  NULL		 , "adjust offsets to file offsets not virtual"},
 		{"d",  NULL	     , "dump unpacked shellcode if changed (requires /f)"},
 		{"las", "int"	 , "log at step ex. -las 100"},
@@ -1508,6 +1554,8 @@ void parse_opts(int argc, char* argv[] ){
 
 	memset(&opts,0,sizeof(struct run_time_options));
 
+	opts.verbosity_onerr = 0;
+	opts.verbosity_after =0;
 	opts.offset = 0;
 	opts.steps = 1000000;
 	opts.file_mode = false;
@@ -1515,6 +1563,7 @@ void parse_opts(int argc, char* argv[] ){
 	opts.getpc_mode = false;
 	opts.mem_monitor = false;
 	opts.no_color = false;
+	opts.exec_till_ret = false;
 
 	for(i=1; i < argc; i++){
 					
@@ -1571,6 +1620,15 @@ void parse_opts(int argc, char* argv[] ){
 				exit(0);
 			}
 		    opts.log_after_va = strtol(argv[i+1], NULL, 16);
+			opts.verbosity_after = 3;
+		}
+
+		if(sl==3 && strstr(argv[i],"/bs") > 0 ){
+			if(i+1 >= argc){
+				printf("Invalid option /bp must specify hex breakpoint addr as next arg\n");
+				exit(0);
+			}
+		    opts.log_after_step = atoi(argv[i+1]);
 			opts.verbosity_after = 3;
 		}
 
@@ -1822,6 +1880,22 @@ int main(int argc, char *argv[])
 
 
 
+
+/*  this block no longer necessary after dll PEB modifications 1-32-11
+		401016   64A130000000                    mov eax,fs:[0x30]  ;&(PEB)
+		40101c   8B400C                          mov eax,[eax+0xc]  ;PEB->Ldr
+		40101f   8B701C                          mov esi,[eax+0x1c] ;PEB->Ldr.InInitOrder 
+		401022   AD                              lodsd              ;PEB->Ldr.InInitOrder.flink (kernel32.dll)
+		401023   8B6820                          mov ebp,[eax+0x20]  InInitOrder[X].module_name (unicode)
+		401026   807D0C33                        cmp byte [ebp+0xc],0x33   
+	
+	unsigned char uni_k32[23] = {
+			0x6B, 0x00, 0x65, 0x00, 0x72, 0x00, 0x6E, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x33, 0x00, 0x32, 0x00, 
+			0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C
+	};
+	emu_memory_write_block(mem, 0x252020+0x40, uni_k32, 23 ); //embed the data
+	emu_memory_write_dword(mem, 0x252020+0x20, 0x252020+0x40); //embed the pointer
+	*/
 
 
 
