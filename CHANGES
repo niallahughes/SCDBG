@@ -1,5 +1,10 @@
 		Changelog for libemu
 
+2.9.11
+    dll - implemented mem range monitor with r/w logging
+	exe - implemented mem range monitor (log patchs and hook detection to win api mode -mdll)
+	      dug into unhandledExceptionFIlter more, not perfect but enabled..working for some (some to complex)
+
 2.5.11
     dll - mem addresses < 0x1000 no longer writable
 		  added support for ntdll..

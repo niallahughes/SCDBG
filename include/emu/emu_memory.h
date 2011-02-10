@@ -73,6 +73,8 @@ void emu_memory_mode_rw(struct emu_memory *m);
 /* memory access hook -dzzie */
 void emu_memory_set_access_monitor(uint32_t lpfnCallback);
 void emu_memory_add_monitor_point(uint32_t address);
+void emu_memory_add_monitor_range(char id, uint32_t start_at, uint32_t end_at);
+void emu_memory_set_range_access_monitor(uint32_t lpfnCallback);
 //----------------------------
 
 #define MEM_BYTE_READ(cpu_p, addr, data_p) \

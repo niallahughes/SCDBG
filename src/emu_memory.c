@@ -52,8 +52,22 @@
 //------------  dzzie -------------- experiment to see how useful this is...
 typedef void (*mm_callback)(uint32_t);
 mm_callback mem_monitor_callback=0;
+
+typedef void (*mm_range_callback)(char, char, uint32_t);
+mm_range_callback mem_monitor_range_callback=0;
+
 int mm_points[256];
 int mm_point_cnt=0;
+int mm_range_cnt=0;
+
+struct mm_range{
+	char id;
+	uint32_t start_at;
+	uint32_t end_at;
+};
+
+struct mm_range mm_ranges[256];
+
 //----------------------------------
 
 struct emu_memory
@@ -262,9 +276,11 @@ static inline void *translate_addr(struct emu_memory *em, uint32_t addr)
 	return NULL;
 }
 
-void mm_check(uint32_t addr, uint32_t len){
+void mm_check(uint32_t addr, uint32_t len, char mode){
 	
 	int i=0;
+
+	//if(mode=='w') printf("Write: %x %x\n",addr,len);
 
 	if( (int)mem_monitor_callback != 0){
 
@@ -277,6 +293,23 @@ void mm_check(uint32_t addr, uint32_t len){
 
 	}
 
+	if( (int)mem_monitor_range_callback != 0){
+
+		for(i=0; i<mm_range_cnt; i++){
+			if( addr >= mm_ranges[i].start_at && addr <= mm_ranges[i].end_at ){ //directly in range
+				mem_monitor_range_callback(mm_ranges[i].id, mode, addr);
+				break;
+			}
+			if(addr < mm_ranges[i].start_at){ //check range
+				if( (addr + len) >= mm_ranges[i].start_at){	
+					mem_monitor_range_callback(mm_ranges[i].id, mode, addr);
+					break;
+				}
+			}
+		}
+
+	}
+
 }
 
 int32_t emu_memory_read_byte(struct emu_memory *m, uint32_t addr, uint8_t *byte)
@@ -284,7 +317,7 @@ int32_t emu_memory_read_byte(struct emu_memory *m, uint32_t addr, uint8_t *byte)
 	addr += m->segment_offset;
 	void *address = translate_addr(m, addr);
 	
-	mm_check(addr,1);
+	mm_check(addr,1,'r');
 
 	if( address == NULL )
 	{
@@ -333,7 +366,7 @@ int32_t emu_memory_read_block(struct emu_memory *m, uint32_t addr, void *dest, s
 	uint32_t oaddr = addr; /* save original addr for recursive call */
 	addr += m->segment_offset;
 	
-	mm_check(addr,len);
+	mm_check(addr,len,'r');
 
 	void *address = translate_addr(m, addr);
 	
@@ -394,6 +427,8 @@ int32_t emu_memory_write_byte(struct emu_memory *m, uint32_t addr, uint8_t byte)
 	
 
 	addr += m->segment_offset;
+
+	mm_check(addr,1,'w'); 
 
 	/*
 	if(addr==0){
@@ -464,6 +499,8 @@ int32_t emu_memory_write_block(struct emu_memory *m, uint32_t addr, void *src, s
 
 	uint32_t oaddr = addr; /* save original addr for recursive call */
 	addr += m->segment_offset;
+
+	mm_check(addr,len,'w');
 
 	/*if(addr==0){ //it was an opcode writing 0 that created memory at 0..
 		printf("Someone is trying to writeblock mem 0?\n");
@@ -603,3 +640,19 @@ void emu_memory_add_monitor_point(uint32_t address){
 	mm_points[mm_point_cnt++] = address;
 }
 
+void emu_memory_set_range_access_monitor(uint32_t lpfnCallback){
+	mem_monitor_range_callback = (mm_range_callback)lpfnCallback;
+}
+
+void emu_memory_add_monitor_range(char id, uint32_t start_at, uint32_t end_at){
+	
+	if(mm_range_cnt == 255){
+		printf("All available monitor ranges full...\n");
+		return;
+	}
+	mm_ranges[mm_range_cnt].id       = id;
+	mm_ranges[mm_range_cnt].start_at = start_at;
+	mm_ranges[mm_range_cnt].end_at   = end_at;
+	mm_range_cnt++;
+	
+}

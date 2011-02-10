@@ -27,9 +27,11 @@
 
 /*  this source has been modified from original see changelog 
 
-	TODO: dump allocs with -d options
-		  support more than one alloc offset? (hardcoded right now)
-		  support unhandledexceptionfilter w/seh (implement as req) - probably not practical..
+	TODO: 
+	      double check mm_ranges to see if any stray noise when api lookup runs -mdll mode
+		  double check exception record in UEF with shellcode test..
+	      dump allocs with -d options
+		  support more than one alloc offset? (hardcoded right now (and hardcoded is nice for most things)
 		  display bug, on breakpoint and on error disasm shown twice
 		  add string deref for pointers in stack dump, deref regs and dword dump?
 		  opcodes A9 and 2F could use supported (pretty easy ones too i think)
@@ -44,7 +46,7 @@
 
 		  how/why/where are loadlibraryA opcodes being written to memory?
 		     answer: looks like entire .text section with imports was included.
-			         (I have just been using the mz and the export table when i add a dll)
+			         (I have just been using the mz/pe header and the export table when i add a dll)
 
 
 */
@@ -107,6 +109,8 @@
 struct run_time_options opts;
 int graph_draw(struct emu_graph *graph);
 void debugCPU(struct emu *e, bool showdisasm);
+int fulllookupAddress(int eip, char* buf255);
+
 
 //-------------------------------------------------------------
 
@@ -129,6 +133,9 @@ uint32_t previous_eip=0;
 bool disable_mm_logging = false;
 int lastExceptionHandler=0;
 int exception_count=0;
+
+int mdll_last_read_eip=0;
+int mdll_last_read_addr=0;
 
 char *regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
 
@@ -154,6 +161,39 @@ struct mm_point mm_points[] =
 	{0x00253320,   "ldrDataEntry.BaseDllName",0},
 	{0x7c862e62,   "UnhandledExceptionFilter",0},
 	{0,NULL,0},
+};
+
+//each dll gets two entries. (yes this sucked to generate)
+//first is imagebase + sizeof(pe headers) (roughly) - start of export table
+//second is image base + rva export table + export table size - through base + size of image
+//even then these had to be tuned a little..luckily stray output tells us which to refine...
+struct mm_range mm_ranges[] = 
+{ 
+	{0, "kernel32", 0x7c800300, 0x7C80260f},                        
+	{0, "kernel32", 0x7c800000+0x261C+0x6C7B+0x1, 0x7C800000+0x831e9},  
+
+    {1, "ws2_32",   0x71a10300, 0x71a1141b},  
+	{1, "ws2_32",   0x71a10000+0x1404+0x11ed+0x1, 0x71a10000+0x16DC8},  
+
+	{2, "user32",   0x7e410300, 0x7e4138ff},                        
+	{2, "user32",   0x7e410000+0x3900+0x4BA9+0x1, 0x7e410000+0x90DE4},  
+
+	{3, "shell32",  0x7c9c0300, 0x7c9e7d4f},
+	{3, "shell32",  0x7c9c0000+0x27D50+0x2918+0x1, 0x7c9c0000+0x8164FC}, // 7C9EA668, 7D1D64FC
+
+	{4, "msvcrt",   0x77be0300, 0x77C2896f},
+	{4, "msvcrt",   0x77be0000+0x489F0+0x4326+0x1, 0x77be0000+0x58000},
+
+	{5, "urlmon",   0x7df20300, 0x7DF21D6b},
+	{5, "urlmon",   0x7df20000+0x1D54+0xA5D+0x1, 0x7df20000+0xA0000},
+	
+	{6, "wininet",  0x3d930300, 0x3d93183f},
+	{6, "wininet",  0x3d930000+0x1844+0x1D4A+0x1, 0x3d930000+0xD0750},
+
+	{7, "ntdll",    0x7c900300, 0x7c9033ff},
+	{7, "ntdll",    0x7C900000+0x3400+0x9A5F, 0x7c900000+0xB1EB8}, //7C90CE5E
+
+	{0, NULL, 0,0},
 };
 
 #define CPU_FLAG_ISSET(cpu_p, fl) ((cpu_p)->eflags & (1 << (fl)))
@@ -193,6 +233,51 @@ void mm_hook(uint32_t address){ //memory monitor callback function
 		i++;
 	}
 
+}
+
+void mm_range_callback(char id, char mode, uint32_t address){
+
+	//printf("in mm_range_callback addr= %x eip= %x\n", address, cpu->eip );
+
+	if(disable_mm_logging) return;
+	
+	//some opcodes like cmp send us a read and write not sure why..but its annoying
+	if(mdll_last_read_eip == last_good_eip && mdll_last_read_addr==address && mode =='w') return;
+
+	if(cpu->eip == address) return;
+	if(last_good_eip == address) return;
+    if(address < 0x1000) return;
+
+	if(mode=='r'){
+		mdll_last_read_eip  = last_good_eip;
+		mdll_last_read_addr = address;
+	}
+
+	int ret = 0;
+	char buf[255]={0};
+	char disasm[200]={0};
+	char *dll=0;
+
+	while(mm_ranges[ret].start_at !=0){
+		if( mm_ranges[ret].id == id){
+			dll = mm_ranges[ret].name;
+			break;
+		}
+		ret++;
+	}
+
+	//printf("lastgoodeip=%x\n", last_good_eip);
+	emu_disasm_addr(cpu, last_good_eip, disasm);
+    ret = fulllookupAddress(address, (char*)&buf);	  
+
+	start_color(mpurple);
+	printf("%x\tmdll %s>\t%s\t %x\t%-10s", last_good_eip, dll, (char*)&disasm[32], address, buf);
+	end_color();
+
+	start_color(myellow);
+	printf("\t%s\n", mode == 'r' ? "READ" : "WRITE");
+	end_color();
+	 
 }
 
 void symbol_lookup(char* symbol){
@@ -935,7 +1020,21 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 
 }
 
-/* we just cant really support every shellcode can we :( */
+/* we just cant really support every shellcode can we :( 
+
+004010E0   . C600 01        MOV BYTE PTR DS:[EAX],1   <--triggered exception
+
+$ ==>    > 7C8438FA  /CALL to UnhandledExceptionFilter from kernel32.7C8438F5
+$+4      > 0012FBE8  \pExceptionInfo = 0012FBE8
+
+0012FBE8  0012FCDC
+
+0012FCDC  C0000005
+0012FCE0  00000000
+0012FCE4  00000000
+0012FCE8  004010E0  shellcod.004010E0
+*/
+
 int handle_UnhandledExceptionFilter(void){
     //ret 0 = handled, ret -1 = unhandled
 
@@ -945,8 +1044,14 @@ int handle_UnhandledExceptionFilter(void){
 		start_color(myellow);
 		printf("\n%x\tException caught w/ UnhandledExceptionFilter\n", last_good_eip);
 		end_color();
-		emu_cpu_eip_set(emu_cpu_get(e), 0x7c862e62);
-		cpu->reg[esp] += 8;
+		emu_cpu_eip_set(emu_cpu_get(e), 0x7c862e62); 
+		//this doesnt work with the popular GlobalAlloc/UEF shellcode..cant replicate that env..
+		//but if the code did write to UEF this will at least let it run that code. and if they
+		//try to access the exception record itself to get the crash address..that should work too..
+		emu_memory_write_dword(mem, 0x10000-0xC, 0xC0000005);
+		emu_memory_write_dword(mem, 0x10000, last_good_eip); 
+		emu_memory_write_dword(mem, cpu->reg[esp], 0xDEADC0DE);
+		emu_memory_write_dword(mem, cpu->reg[esp]+4, 0x10000-0xC);
 		return 0;
 	}
 
@@ -1115,6 +1220,8 @@ int run_sc(void)
 		graph = emu_graph_new();
 		eh = emu_hashtable_new(2047, emu_hashtable_ptr_hash, emu_hashtable_ptr_cmp);
 	}
+
+	disable_mm_logging = false;
 
 //----------------------------- MAIN STEP LOOP ----------------------
 	opts.cur_step = -1;
@@ -1321,7 +1428,7 @@ int run_sc(void)
 				disable_mm_logging = true;
 				ret = handle_seh(e, last_good_eip);
 				if(ret == -1) { //not handled by seh
-					//ret = handle_UnhandledExceptionFilter();
+					ret = handle_UnhandledExceptionFilter();
 				}
 				disable_mm_logging = false;
 			} 
@@ -1421,7 +1528,6 @@ int run_sc(void)
 		}
 	}
 
-
 	if ( opts.graphfile != NULL )
 	{
 		graph_draw(graph);
@@ -1486,6 +1592,7 @@ void print_help(void)
 		{"findsc", NULL ,  "Scans file for possible shellcode buffers (getpc mode)"},
 		{"foff", "hexnum" ,"starts execution at file offset"},
 		{"mm", NULL,       "enables Memory Monitor to log access to key addresses."},
+		{"mdll", NULL,     "uses Memory Monitor to log direct access to dll memory (detect hooks)"},
 		{"nc", NULL,       "no color (if using sending output to other apps)"},
 		{"S", "< file.sc", "read shellcode/buffer from stdin"},
 		{"f", "fpath"    , "load shellcode from file specified."},
@@ -1564,6 +1671,7 @@ void parse_opts(int argc, char* argv[] ){
 	opts.mem_monitor = false;
 	opts.no_color = false;
 	opts.exec_till_ret = false;
+	opts.mem_monitor_dlls = false;
 
 	for(i=1; i < argc; i++){
 					
@@ -1585,6 +1693,7 @@ void parse_opts(int argc, char* argv[] ){
 		if(sl==4 && strstr(argv[i],"/vvv") > 0 )  opts.verbose = 3;
 		if(sl==3 && strstr(argv[i],"/vv")  > 0 )  opts.verbose = 2;
 		if(sl==3 && strstr(argv[i],"/mm")  > 0 )  opts.mem_monitor = true;
+		if(sl==5 && strstr(argv[i],"/mdll")  > 0 )  opts.mem_monitor_dlls  = true;
 		if(strstr(buf,"/d") > 0 ) opts.dump_mode = true;
 		if(sl==2 && strstr(buf,"/h") > 0 ) print_help();
 		if(strstr(buf,"/S") > 0 ) opts.from_stdin = true;
@@ -1795,6 +1904,8 @@ int main(int argc, char *argv[])
 	static struct termios oldt;
 	int i=0;
 
+	disable_mm_logging = true;
+
 	tcgetattr( STDIN_FILENO, &oldt);
 	orgt = oldt;
 	oldt.c_lflag &= ~(ICANON | ECHO);                
@@ -1811,8 +1922,19 @@ int main(int argc, char *argv[])
 	if(opts.mem_monitor){
 		printf("Memory monitor enabled..\n");
 		emu_memory_set_access_monitor((uint32_t)mm_hook);
+		i=0;
 		while(mm_points[i].address != 0){
 			emu_memory_add_monitor_point(mm_points[i++].address);
+		}
+	}
+
+	if(opts.mem_monitor_dlls){
+		printf("Memory monitor for dlls enabled..\n");
+		emu_memory_set_range_access_monitor((uint32_t)mm_range_callback);
+		i=0;
+		while(mm_ranges[i].start_at != 0){
+			emu_memory_add_monitor_range(mm_ranges[i].id, mm_ranges[i].start_at, mm_ranges[i].end_at);
+			i++;
 		}
 	}
 

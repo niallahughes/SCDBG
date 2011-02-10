@@ -24,6 +24,7 @@ struct run_time_options
 	char* break_at_instr;
 	bool  getpc_mode;
 	bool  mem_monitor;
+	bool  mem_monitor_dlls;
 	bool  no_color;
 	uint32_t step_over_bp;
 
@@ -45,7 +46,15 @@ struct mm_point{
 	uint32_t hitat;
 };
 
+struct mm_range{
+	char id;
+	char* name;
+	uint32_t start_at;
+	uint32_t end_at;
+};
+
 extern struct mm_point mm_points[];
+extern struct mm_range mm_ranges[];
 extern struct run_time_options opts;
 
 bool cmp(void *a, void *b);

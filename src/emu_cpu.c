@@ -930,7 +930,7 @@ uint32_t emu_disasm_addr(struct emu_cpu *c, uint32_t eip, char *str)
 
 	uint8_t data[32];
 
-	emu_memory_read_block(c->mem,eip,data,32);
+	if(emu_memory_read_block(c->mem,eip,data,32)==-1) return 0;
     //uint32_t expected_instr_size = dasm_print_instruction(c->eip,dis,0,c->instr_string);
 
 
