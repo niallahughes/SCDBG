@@ -23,9 +23,12 @@ struct run_time_options
 	bool show_hexdumps;
 	char* break_at_instr;
 	bool  getpc_mode;
+	int   org_getpc;
 	bool  mem_monitor;
 	bool  mem_monitor_dlls;
 	bool  no_color;
+	int   hexdump_file;
+	int   disasm_mode;
 	uint32_t step_over_bp;
 
 	struct 

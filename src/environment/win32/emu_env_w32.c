@@ -560,16 +560,16 @@ int32_t emu_env_w32_export_new_hook(struct emu_env *env,
 				printf("hooked %s\n",  exportname);
 #endif
 				struct emu_env_hook *hook = (struct emu_env_hook *)ehi->value;
-				if(hook->hook.win->fnhook != 0){
+				/*if(hook->hook.win->fnhook != 0){
 					//this message will only be shown to developers would not be hit after that..
 					printf("Can not set new hook on %s.\n", exportname);
 					printf("Already implemented in dll use emu_env_w32_export_hook instead\n");
 					exit(-1);
 					return -1;
-				}else{
+				}else{*/
 					//the user is now responsible for stack clean up and arg dereferencing
 					hook->hook.win->fnhook = fnhook;
-				}
+				//}
 				hook->hook.win->userdata = userdata;
 				return 0;
 			}

@@ -101,9 +101,12 @@
 extern int CODE_OFFSET;
 extern uint32_t FS_SEGMENT_DEFAULT_OFFSET;
 extern void hexdump(unsigned char*, int);
+extern void add_malloc(uint32_t, uint32_t);
 extern struct emu_memory *mem;
 extern struct emu_cpu *cpu;    //these two are global in main code
 extern bool disable_mm_logging;
+
+uint32_t next_alloc = 0x60000; //these increment so we dont walk on old allocs
 
 //by the time our user call is called, the args have already been popped off the stack.
 //in r/t that just means that esp has been adjusted and cleaned up for function to 
@@ -152,7 +155,18 @@ unsigned int get_client_port(struct sockaddr *clientInformation)
 	return 0;
 }
 
-void cygwin_safe_path(char* fpath){ //modifies parent string use after logging..
+void set_next_alloc(int size){  //space allocs at 0x1000 bytes for easy offset recgonition..
+	add_malloc(next_alloc, size); //record current one for dumping if need be..
+	if(size % 1000 == 0){
+		size += 0x1000;
+	}else{
+		while( size % 0x1000 != 0) size++;
+	}
+	next_alloc += size;
+	//printf("next_alloc=%x\n", next_alloc);
+}
+
+/*void cygwin_safe_path(char* fpath){ //modifies parent string use after logging.. (no reason to bother with this..)
 	
 	if(fpath==NULL)return;
 
@@ -168,9 +182,9 @@ void cygwin_safe_path(char* fpath){ //modifies parent string use after logging..
 		if( fpath[i] == '?') fpath[i] = '.';
 		if( fpath[i] == '*') fpath[i] = '.';
 	}
-}
+}*/
 
-void append(struct emu_string *to, const char *dir, char *data, int size)
+/*void append(struct emu_string *to, const char *dir, char *data, int size)
 {
 	char *saveptr = data;
 
@@ -221,7 +235,7 @@ void append(struct emu_string *to, const char *dir, char *data, int size)
 
 	}
 	emu_string_free(sanestr);
-}
+}*/
 
 void GetSHFolderName(int id, char* buf255){
 	
@@ -318,6 +332,19 @@ uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook,
 
 	uint32_t retaddr = get_ret(env, -44);
 
+/*BOOL CreateProcess( 
+  LPCWSTR pszImageName, 
+  LPCWSTR pszCmdLine, 
+  LPSECURITY_ATTRIBUTES psaProcess, 
+  LPSECURITY_ATTRIBUTES psaThread, 
+  BOOL fInheritHandles, 
+  DWORD fdwCreate, 
+  LPVOID pvEnvironment, 
+  LPWSTR pszCurDir, 
+  LPSTARTUPINFOW psiStartInfo, 
+  LPPROCESS_INFORMATION pProcInfo
+);*/
+
 	va_list vl;
 	va_start(vl, hook);
 
@@ -329,7 +356,17 @@ uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook,
 
 	va_end(vl);
 
-	printf("%x\tCreateProcess( %s, %s )\n",retaddr, pszCmdLine, pszImageName );
+	struct emu_string *cmd = emu_string_new();
+
+	if(pszImageName == 0 && pszCmdLine[0] == 0){
+		//some shellcode uses the function prolog of CreateProcess to put stack inline..
+		//printf("adjusting to use ebp..\n");
+		emu_memory_read_string(mem, cpu->reg[ebp] , cmd, 255);
+		pszCmdLine = (char*)cmd->data; 
+		printf("%x\tCreateProcessA( %s ) (ebp)\n",retaddr, pszCmdLine); 
+	}else{
+		printf("%x\tCreateProcessA( %s, %s )\n",retaddr, pszCmdLine, pszImageName );
+	}
 
 	if(opts.interactive_hooks == 0) return 1;
 
@@ -337,6 +374,9 @@ uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook,
 	{
 		//todo possibly do stuff here to capture command line sent to cmd...
 	}
+
+	
+	emu_string_free(cmd);
 
 	return 1;
 }
@@ -564,12 +604,14 @@ uint32_t user_hook_fopen(struct emu_env *env, struct emu_env_hook *hook, ...)
 		return 0x4711;
 	}
 
+	/*
 	char* tmp_file = strdup(filename);
-
 	cygwin_safe_path(tmp_file);
 	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",tmp_file) == -1) return -1;
 	free(tmp_file);
+	*/
 
+	if ( asprintf(&localfile, "/tmp/XXXXXXXX") == -1) return -1;
 	int fd = mkstemp(localfile);
 	close(fd);
 
@@ -792,11 +834,14 @@ HANDLE CreateFile(
 
 	if(opts.interactive_hooks == 0 ) return 0x4444;
 
+	/*
 	char* tmp_file = strdup(lpFileName);
 	cygwin_safe_path(tmp_file);
 	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",tmp_file) == -1) return -1; //exit(-1);
 	free(tmp_file);
+	*/
 
+	if ( asprintf(&localfile, "/tmp/XXXXXXXX") == -1) return -1; //exit(-1);
 	int fd = mkstemp(localfile);
 	close(fd);
 
@@ -1036,10 +1081,13 @@ LONG _lcreat(
 	
 	if(opts.interactive_hooks == 0) return 1;
 
+	
 	char *localfile;
-	cygwin_safe_path(fname);
+	/*cygwin_safe_path(fname);
 	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",fname) == -1) return -1; //exit(-1);
+	*/
 
+	if ( asprintf(&localfile, "/tmp/XXXXXXXX") == -1) return -1; //exit(-1);
 	int fd = mkstemp(localfile);
 	close(fd);
 
@@ -1571,6 +1619,10 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	);
 
     ZwTerminateProcess, ZwTerminateThread, each 2 args
+    BOOL WINAPI TerminateThread(inout HANDLE hThread, DWORD dwExitCode)
+);
+
+
 */
 
 	int arg_count=0;
@@ -1589,7 +1641,10 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 		arg_count = 2;
 	}
 
-	if(strcmp(func, "ZwTerminateProcess") == 0 || strcmp(func, "ZwTerminateThread") == 0){
+	if(strcmp(func, "ZwTerminateProcess") == 0 
+		|| strcmp(func, "ZwTerminateThread") == 0
+		|| strcmp(func, "TerminateThread") == 0
+	){
 		log_val = get_ret(env,0); //handle
 		arg_count = 2;
 		opts.steps =0;
@@ -1694,9 +1749,10 @@ int32_t	new_user_hook_GlobalAlloc(struct emu_env *env, struct emu_env_hook *hook
 	uint32_t size;
 	POP_DWORD(c, &size);
 
-	uint32_t baseMemAddress = 0x60000; //easier to calculate offsets from...
+	uint32_t baseMemAddress = next_alloc;
 
 	if(size > 0 && size < 9000){
+		set_next_alloc(size);
 		void *buf = malloc(size);
 		memset(buf,0,size);
 		emu_memory_write_block(mem,baseMemAddress,buf, size);
@@ -1737,11 +1793,12 @@ int32_t	new_user_hook_MapViewOfFile(struct emu_env *env, struct emu_env_hook *ho
 	POP_DWORD(c, &size);
 	POP_DWORD(c, &size);
 
-	uint32_t baseMemAddress = 0x666666;
+	uint32_t baseMemAddress = next_alloc;
 
 	if(size==0) size = 5000; //size was specified in CreateFileMapping...so we default it...
 
 	if(size > 0 && size < 9000){
+		set_next_alloc(size);
 		void *buf = malloc(size);
 		memset(buf,0,size);
 		emu_memory_write_block(mem,baseMemAddress,buf, size);
@@ -1790,7 +1847,7 @@ int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_en
 
 	emu_memory_read_string(mem, p_url, s_url, 255);
 
-	printf("%x\tURLDownloadToCacheFileA(%s)\n",eip_save,  emu_string_char(s_url));
+	printf("%x\tURLDownloadToCacheFileA(%s, buf=%x)\n",eip_save,  emu_string_char(s_url), p_fname);
 
 	emu_string_free(s_url);
 
@@ -1798,10 +1855,11 @@ int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_en
 
 	//printf("bufsize = %d , pfname = %x\n", bufsz, p_fname);
 
-	if(bufsz > strlen(tmp) )
+	if(bufsz > strlen(tmp) ){
 		emu_memory_write_block(mem,p_fname, tmp, strlen(tmp));
-	
-	
+		emu_memory_write_byte(mem,p_fname + strlen(tmp)+1, 0x00);
+	}
+
 	emu_cpu_reg32_set(c, eax, 0); // S_OK 
 	emu_cpu_eip_set(c, eip_save);
 	return 1;
@@ -1866,9 +1924,10 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 	uint32_t flProtect;
 	POP_DWORD(c, &flProtect);
 
-	uint32_t baseMemAddress = 0x60000; //easier to calc offsets from..
+	uint32_t baseMemAddress = next_alloc;
 
 	if(size < 9000){
+		set_next_alloc(size);
 		printf("%x\tVirtualAlloc(base=%x , sz=%x) = %x\n", eip_save, address, size, baseMemAddress);
 		if(size < 1024) size = 1024;
 		void *buf = malloc(size);
@@ -1969,5 +2028,7 @@ int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hoo
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
 }
+
+
 
 

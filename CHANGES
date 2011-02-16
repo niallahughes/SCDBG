@@ -1,7 +1,15 @@
 		Changelog for libemu
 
+2.12.11
+    exe - bugfixes/cleanups, new brute force findsc mode, CreateProcessA now supports shellcode
+	      which uses its function prolog to put args inline. hexdump mode to examine shellcode
+	      added /disasm, /dump, /getpc modes, added hook TerminateThread, support for multiple Allocs
+	      dump mode now dumps any allocs made as well..
+
 2.9.11
     dll - implemented mem range monitor with r/w logging
+	      void emu_memory_add_monitor_range(char id, uint32_t start_at, uint32_t end_at);
+          void emu_memory_set_range_access_monitor(uint32_t lpfnCallback);
 	exe - implemented mem range monitor (log patchs and hook detection to win api mode -mdll)
 	      dug into unhandledExceptionFIlter more, not perfect but enabled..working for some (some to complex)
 

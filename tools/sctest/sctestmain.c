@@ -31,7 +31,6 @@
 	      double check mm_ranges to see if any stray noise when api lookup runs -mdll mode
 		  double check exception record in UEF with shellcode test..
 	      dump allocs with -d options
-		  support more than one alloc offset? (hardcoded right now (and hardcoded is nice for most things)
 		  display bug, on breakpoint and on error disasm shown twice
 		  add string deref for pointers in stack dump, deref regs and dword dump?
 		  opcodes A9 and 2F could use supported (pretty easy ones too i think)
@@ -98,44 +97,63 @@
 #include "emu/emu_shellcode.h"
 
 #define F(x) (1 << (x))
+#define CPU_FLAG_ISSET(cpu_p, fl) ((cpu_p)->eflags & (1 << (fl)))
+#define FLAG(fl) (1 << (fl))
 
 #include "userhooks.h"
 #include "options.h"
 #include "dot.h"
 #include "tests.h"
 #include "nanny.h"
-
-
-struct run_time_options opts;
-int graph_draw(struct emu_graph *graph);
-void debugCPU(struct emu *e, bool showdisasm);
-int fulllookupAddress(int eip, char* buf255);
-
-
-//-------------------------------------------------------------
-
 #include <io.h>
 #include <termios.h>
 #include <signal.h>
 
-uint32_t FS_SEGMENT_DEFAULT_OFFSET = 0x7ffdf000;
-int CODE_OFFSET = 0x00401000;
-static struct termios orgt;
-int ctrl_c_count=0;
+struct hh{
+	uint32_t eip;
+	uint32_t addr;
+	char *name;
+};
 
-//this is just easier...only one global object anyway
-struct emu *e = 0;
+struct emm_mode{
+	struct hh hooks[11];
+	struct hh bps[11];
+	struct hh patches[11];
+};
+
+struct m_allocs{
+	uint32_t base;
+	uint32_t size;
+};
+
+int malloc_cnt=0;
+struct m_allocs mallocs[21];
+
+struct emm_mode emm; //extended memory monitor
+struct run_time_options opts;
+static struct termios orgt;
+struct emu *e = 0;           //this is just easier...only one global object anyway
 struct emu_cpu *cpu = 0;
 struct emu_memory *mem = 0;
 struct emu_env *env = 0;
+
+int graph_draw(struct emu_graph *graph);
+void debugCPU(struct emu *e, bool showdisasm);
+int fulllookupAddress(int eip, char* buf255);
+
+uint32_t FS_SEGMENT_DEFAULT_OFFSET = 0x7ffdf000;
+int CODE_OFFSET = 0x00401000;
+int ctrl_c_count=0;
 uint32_t last_good_eip=0;
 uint32_t previous_eip=0;
 bool disable_mm_logging = false;
 int lastExceptionHandler=0;
 int exception_count=0;
-
+bool in_repeat = false;
 int mdll_last_read_eip=0;
 int mdll_last_read_addr=0;
+
+extern uint32_t next_alloc;
 
 char *regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
 
@@ -196,26 +214,29 @@ struct mm_range mm_ranges[] =
 	{0, NULL, 0,0},
 };
 
-#define CPU_FLAG_ISSET(cpu_p, fl) ((cpu_p)->eflags & (1 << (fl)))
-
-
 enum colors{ mwhite=0, mgreen, mred, myellow, mblue, mpurple };
+void end_color(void){ if(!opts.no_color) printf("\033[0m"); }
+void nl(void){ printf("\n"); }
+void restore_terminal(int arg)    { tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
+void atexit_restore_terminal(void){ tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
 
 void start_color(enum colors c){
 	char* cc[] = {"\033[37;1m", "\033[32;1m", "\033[31;1m", "\033[33;1m", "\033[34;1m", "\033[35;1m"};
 	if(opts.no_color) return;
 	printf("%s", cc[c]);
 }
-void end_color(void){ if(!opts.no_color) printf("\033[0m"); }
-void nl(void){ printf("\n"); }
-#define FLAG(fl) (1 << (fl))
-void restore_terminal(int arg)    { tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
-void atexit_restore_terminal(void){ tcsetattr( STDIN_FILENO, TCSANOW, &orgt); }
 
 void ctrl_c_handler(int arg){ 
 	opts.verbose = 3;             //break next instruction
 	ctrl_c_count++;               //user hit ctrl c a couple times, 
 	if(ctrl_c_count > 1) exit(0); //must want out for real.. (zeroed each step)
+}
+
+void add_malloc(uint32_t base, uint32_t size){
+	if( malloc_cnt > 20 ) return;
+	mallocs[malloc_cnt].base = base;
+	mallocs[malloc_cnt].size = size;
+	malloc_cnt++;
 }
 
 void mm_hook(uint32_t address){ //memory monitor callback function
@@ -239,8 +260,14 @@ void mm_range_callback(char id, char mode, uint32_t address){
 
 	//printf("in mm_range_callback addr= %x eip= %x\n", address, cpu->eip );
 
+	char disasm[200]={0};
+	int ret = 0;
+	int i;
+	char buf[255]={0};
+	char *dll=0;
+
 	if(disable_mm_logging) return;
-	
+
 	//some opcodes like cmp send us a read and write not sure why..but its annoying
 	if(mdll_last_read_eip == last_good_eip && mdll_last_read_addr==address && mode =='w') return;
 
@@ -253,11 +280,59 @@ void mm_range_callback(char id, char mode, uint32_t address){
 		mdll_last_read_addr = address;
 	}
 
-	int ret = 0;
-	char buf[255]={0};
-	char disasm[200]={0};
-	char *dll=0;
+	//printf("lastgoodeip=%x\n", last_good_eip);
+	emu_disasm_addr(cpu, last_good_eip, disasm);
+    ret = fulllookupAddress(address, (char*)&buf);	  
 
+	//----------------------- extended mm mode code (run with mm mode)
+	if(mode=='w'){
+		for(i=0;i<10;i++){
+
+			if( emm.patches[i].addr == address ||
+				(emm.patches[i].addr < address && 
+				 emm.patches[i].addr+10 >= address)
+				) 
+				break; //no duplicates, allow up to 10 bytes sequential without second alert..
+
+			if( emm.patches[i].eip == 0 ){
+				emm.patches[i].eip = last_good_eip;
+				emm.patches[i].addr = address;
+				emm.patches[i].name = strdup(buf);
+				break;
+			}
+
+		}
+	}
+
+	if(mode=='r'){
+		if(strstr(disasm, "0xe8") > 0 || strstr(disasm, "0xe9") > 0){
+			for(i=0;i<10;i++){
+				if( emm.hooks[i].addr == address) break; //only show unique addresses
+				if( emm.hooks[i].eip  == 0 ){
+					emm.hooks[i].eip  = last_good_eip;
+					emm.hooks[i].addr  = address;
+					emm.hooks[i].name  = strdup(buf);
+					break;
+				}
+			}
+		}
+
+		if(strstr(disasm, "0xcc") > 0 ){
+			for(i=0;i<10;i++){
+				if( emm.bps[i].addr == address) break; //only show unique addresses
+				if( emm.bps[i].eip  == 0 ){
+					emm.bps[i].eip  = last_good_eip;
+					emm.bps[i].addr  = address;
+					emm.bps[i].name  = strdup(buf);
+					break;
+				}
+			}
+		}
+	}
+
+	if(!opts.mem_monitor_dlls) return; 
+	//------------------------
+	
 	while(mm_ranges[ret].start_at !=0){
 		if( mm_ranges[ret].id == id){
 			dll = mm_ranges[ret].name;
@@ -265,10 +340,6 @@ void mm_range_callback(char id, char mode, uint32_t address){
 		}
 		ret++;
 	}
-
-	//printf("lastgoodeip=%x\n", last_good_eip);
-	emu_disasm_addr(cpu, last_good_eip, disasm);
-    ret = fulllookupAddress(address, (char*)&buf);	  
 
 	start_color(mpurple);
 	printf("%x\tmdll %s>\t%s\t %x\t%-10s", last_good_eip, dll, (char*)&disasm[32], address, buf);
@@ -373,6 +444,86 @@ int fulllookupAddress(int eip, char* buf255){
 	return 0;
 }
 
+void do_memdump(void){
+	
+	unsigned char* tmp ;
+	char* tmp_path;
+	int ii;
+	FILE *fp;
+
+	printf("Primary memory: Reading 0x%x bytes from 0x%x\n", opts.size, CODE_OFFSET);
+	tmp = (unsigned char*)malloc(opts.size);
+   	tmp_path = (char*)malloc( strlen(opts.sc_file) + 50);
+
+	if(emu_memory_read_block(mem, CODE_OFFSET, tmp,  opts.size) == -1){
+		printf("ReadBlock failed!\n");
+	}else{
+   	 
+		printf("Scanning for changes...\n");
+		for(ii=0;ii<opts.size;ii++){
+			if(opts.scode[ii] != tmp[ii]) break;
+		}
+
+		if(ii < opts.size){
+			strcpy(tmp_path, opts.sc_file);
+			sprintf(tmp_path,"%s.unpack",tmp_path);
+
+			start_color(myellow);
+			printf("Change found at %i dumping to %s\n",ii,tmp_path);
+		
+			fp = fopen(tmp_path, "wb");
+			if(fp==0){
+				printf("Failed to create file\n");
+			}else{
+				fwrite(tmp, 1, opts.size, fp);
+				fclose(fp);
+				printf("Data dumped successfully to disk");
+			}
+			end_color();
+		}else{
+			printf("No changes found in primary memory, dump not created.\n");
+		}
+
+	}
+
+	free(tmp);
+
+	if( malloc_cnt > 0 ){ //then there were allocs made..
+		
+		start_color(myellow);
+		printf("Dumping %d runtime memory allocations..\n", malloc_cnt);
+		
+		for(ii=0; ii < malloc_cnt; ii++){
+		
+			tmp = (unsigned char*)malloc(mallocs[ii].size);
+
+			if(emu_memory_read_block(mem, mallocs[ii].base, tmp,  mallocs[ii].size) == -1){
+				printf("ReadBlock failed! base=%x size=%x\n", mallocs[ii].base, mallocs[ii].size );
+			}else{
+   			 
+				strcpy(tmp_path, opts.sc_file);
+				sprintf(tmp_path,"%s.alloc_0x%x",tmp_path, mallocs[ii].base);
+			
+				fp = fopen(tmp_path, "wb");
+				if(fp==0){
+					printf("Failed to create file\n");
+				}else{
+					fwrite(tmp, 1, mallocs[ii].size, fp);
+					fclose(fp);
+					printf("Alloc %x (%x bytes) dumped successfully to disk as %s\n", mallocs[ii].base, mallocs[ii].size, tmp_path);
+				}
+			}
+
+			free(tmp);
+		}
+
+		end_color();
+			
+	}
+
+	free(tmp_path);
+}
+
 int file_length(FILE *f)
 {
 	int pos;
@@ -425,7 +576,7 @@ void deref_regs(void){
 	nl();
 }
 
-void hexdump(unsigned char* str, int len){
+void real_hexdump(unsigned char* str, int len, int offset, bool hexonly){
 	
 	char asc[19];
 	int aspot=0;
@@ -433,9 +584,14 @@ void hexdump(unsigned char* str, int len){
     int hexline_length = 3*16+4;
 	
 	char *nl="\n";
-	unsigned char *tmp = (unsigned char*)malloc(50);
+	char *tmp = (char*)malloc(75);
 
-	printf(nl);
+	if(!hexonly) printf(nl);
+	
+	if(offset >=0){
+		printf("        0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
+		printf("%04x   ", offset);
+	}
 
 	for(i=0;i<len;i++){
 
@@ -448,8 +604,14 @@ void hexdump(unsigned char* str, int len){
 		aspot++;
 		if(aspot%16==0){
 			asc[aspot]=0x00;
-			sprintf(tmp,"    %s\n", asc);
-			printf("%s",tmp);
+			if(!hexonly){
+				sprintf(tmp,"    %s\n", asc);
+				printf("%s",tmp);
+			}
+			if(offset >=0){
+				offset += 16;
+				printf("%04x   ", offset);
+			}
 			aspot=0;
 		}
 
@@ -459,18 +621,32 @@ void hexdump(unsigned char* str, int len){
 		int spacer = hexline_length - (aspot*3);
 		while(spacer--)	printf("%s"," ");	
 		asc[aspot]=0x00;
-		sprintf(tmp, "%s\n",asc);
-		printf("%s",tmp);
+		if(!hexonly){
+			sprintf(tmp, "%s\n",asc);
+			printf("%s",tmp);
+		}
 	}
 	
-	printf("%s",nl);
+	if(!hexonly) printf("%s",nl);
 	free(tmp);
-
 
 }
 
-//---------------------------------------------------------
+void hexdump(unsigned char* str, int len){ //why doesnt gcc support optional args?
+	real_hexdump(str,len,-1,false);
+}
 
+void disasm_block(int offset, int size){
+	int i, bytes_read, base;
+	char disasm[200];
+	base = offset;
+	for(i=0;i<size;i++){
+		bytes_read = emu_disasm_addr(cpu, base, disasm); 
+		if(bytes_read < 1) break;
+		printf("%x\t%s\n", base, disasm);
+		base += bytes_read;
+	}
+}
 
 uint32_t get_instr_length(uint32_t va){
 	char disasm[200];
@@ -691,7 +867,6 @@ void show_debugshell_help(void){
 
 void interactive_command(struct emu *e){
 
-	
 	printf("\n");
     
 	disable_mm_logging = true;
@@ -893,6 +1068,9 @@ void debugCPU(struct emu *e, bool showdisasm){
 	int i=0;
 	//struct emu_memory *m = emu_memory_get(e);
 
+
+	if( in_repeat ) return;
+
 	if (opts.verbose == 0) return;
 
 	//verbose 1= offset opcodes disasm step count every 5th hit
@@ -1016,6 +1194,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "InternetReadFile", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "ZwTerminateProcess", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "ZwTerminateThread", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "TerminateThread", new_user_hook_GenericStub, NULL);
 
 
 }
@@ -1134,24 +1313,77 @@ int handle_seh(struct emu *e,int last_good_eip){
 
 }
 
-int run_sc(void)
-{
+int mini_run(int limit){
+	int steps=0;
+	while (emu_cpu_parse(cpu) == 0)
+	{
+		if ( emu_cpu_step(cpu) != 0 ) break;
+        if(steps >= limit) break;
+		steps++;
+	}
+	return steps;
+}
 
+int find_sc(void){ //loose brute force let user decide...
+	
+	int i, ret, s;    
+	int max_step_cnt=0;
+	int max_offset= -1;
+	int limit = 250000;
+    char buf[20];
+    int last_offset=0, last_step_cnt=0;
+	bool zero_valid = false;
+
+	for(i=0; i < opts.size ; i++){
+		emu_memory_write_block(mem, CODE_OFFSET, opts.scode,  opts.size); //fresh copy each time..
+		if( opts.scode[i] != 0 && get_instr_length( CODE_OFFSET + i ) > 0 ){
+			cpu->eip = CODE_OFFSET + i;
+			s = mini_run(limit);
+			if(s > 100 && cpu->eip > (CODE_OFFSET + i + 100) ){
+				if( s > max_step_cnt){
+					max_step_cnt = s;
+					max_offset = i;
+				}
+				
+				if(last_step_cnt >= s && (last_offset+1) == i ){ //try to not be spamy 
+					last_offset++;
+					//printf("hiding\n");
+				}else{
+					if(s == limit)
+						printf("offset= 0x%04x   steps=MAX  final_eip= %08x ops= ", i, cpu->eip );
+					else
+						printf("offset= 0x%04x   steps=%-7d final_eip= %08x   ops= ", i, s, cpu->eip );
+					
+					real_hexdump(opts.scode + i, 10, -1, true);
+					nl();
+
+					if(i==0) zero_valid = true;
+					last_offset = i;
+					last_step_cnt = s;
+				}
+			}
+		}
+
+	}
+
+	ret = -1;
+	if( max_offset >= 0 ){
+		ret = read_hex("\nEnter offset to start execution at (-1 = quit)",(char*)&buf);
+		if(ret == 0 && !zero_valid) ret = -1;
+	}else{
+		printf("No shellcode detected..\n");
+	}
+	
+	return ret;
+
+}
+
+void init_emu(void){
+	
 	int i =  0;
-	int j =  0;
-	int ret;
 	void* stack;
 	int stacksz;
-	char disasm[200];
-    bool firstchance = true;
-	int static_offset = CODE_OFFSET;
-	uint32_t eipsave = 0;
-	bool parse_ok = false;
-	struct emu_vertex *last_vertex = NULL;
-	struct emu_graph *graph = NULL;
-	struct emu_hashtable *eh = NULL;
-	struct emu_hashtable_item *ehi = NULL;
-
+	
 	int regs[] = {0,    0,      0,     0,  0x12fe00,0x12fff0  ,0,    0};
 	//            0      1      2      3      4      5         6      7    
 	//*regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
@@ -1163,13 +1395,12 @@ int run_sc(void)
 	env = emu_env_new(e);
 
 	env->profile = emu_profile_new();
-	struct nanny *na = nanny_new();
 
 	if ( env == 0 )
 	{
 		printf("%s \n", emu_strerror(e));
 		printf("%s \n", strerror(emu_errno(e)));
-		return -1;
+		exit(-1);
 	}
 
 	for (i=0;i<8;i++) emu_cpu_reg32_set( emu_cpu_get(e), i , regs[i]);
@@ -1180,7 +1411,6 @@ int run_sc(void)
 	
 	//printf("writing initial stack space\n");
 	emu_memory_write_block(mem, regs[esp] - 250, stack, stacksz);
-
 
 	/*  support the topstack method to find k32 base...
 		00401003   64:8B35 18000000 MOV ESI,DWORD PTR FS:[18]
@@ -1206,13 +1436,32 @@ int run_sc(void)
 
 	//some of the shellcodes look for hooks set on some API, lets add some mem so it exists to check
     emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile
+	
+	emu_memory_write_block(mem, CODE_OFFSET, opts.scode,  opts.size);
 
-	printf("Writing code to memory\n\n");	
-	emu_memory_write_block(mem, static_offset, opts.scode,  opts.size);
+	printf("Emu Initilization Complete..\n");
+
+}
+
+int run_sc(void)
+{
+
+	int i =  0;
+	int j =  0;
+	int ret;
+	char disasm[200];
+    bool firstchance = true;
+	uint32_t eipsave = 0;
+	bool parse_ok = false;
+	struct emu_vertex *last_vertex = NULL;
+	struct emu_graph *graph = NULL;
+	struct emu_hashtable *eh = NULL;
+	struct emu_hashtable_item *ehi = NULL;
 
 	//printf("Setting eip\n");
-	emu_cpu_eip_set(emu_cpu_get(e), static_offset + opts.offset);  //+ opts.offset for getpc mode
+	emu_cpu_eip_set(emu_cpu_get(e), CODE_OFFSET + opts.offset);  //+ opts.offset for getpc mode
 
+	struct nanny *na = nanny_new();
 	set_hooks(env,na);
 
 	if ( opts.graphfile != NULL )
@@ -1332,7 +1581,9 @@ int run_sc(void)
 
 			ret = 0;
 			parse_ok = true;
-			if(opts.verbose > 0) show_disasm(e);
+			in_repeat = cpu->repeat_current_instr;
+
+			if(opts.verbose > 0 && in_repeat == false) show_disasm(e);
 
 //--- PARSE
 			ret = emu_cpu_parse(emu_cpu_get(e));
@@ -1473,52 +1724,14 @@ int run_sc(void)
 
 //--------------------------------------- END OF STEP LOOP ---------------------------------
 
-		//------------------ [ dump decoded buffer added dzzie ] ----------------------
-	if(opts.dump_mode && opts.file_mode){
-		unsigned char* tmp ;
-		char* tmp_path;
-		int ii;
-
-		printf("Final buffer: Reading 0x%x bytes from 0x%x\n", opts.size, CODE_OFFSET);
-		tmp = (unsigned char*)malloc(opts.size);
-   		
-		if(emu_memory_read_block(mem, CODE_OFFSET, tmp,  opts.size) == -1){
-			printf("ReadBlock failed!\n");
-		}else{
-   		 
-			printf("Scanning for changes...\n");
-			for(ii=0;ii<opts.size;ii++){
-				if(opts.scode[ii] != tmp[ii]) break;
-			}
-
-			if(ii < opts.size){
-				tmp_path = (char*)malloc( strlen(opts.sc_file) + 15);
-				strcpy(tmp_path, opts.sc_file);
-				sprintf(tmp_path,"%s.unpack",tmp_path);
-
-				start_color(myellow);
-				printf("Change found at %i dumping to %s\n",ii,tmp_path);
-			
-				FILE *fp;
-				fp = fopen(tmp_path, "wb");
-				if(fp==0){
-					printf("Failed to create file\n");
-				}else{
-					fwrite(tmp, 1, opts.size, fp);
-					fclose(fp);
-					printf("Data dumped successfully to disk");
-				}
-				end_color();
-			}else{
-				printf("No changes found dump not created.\n");
-			}
-
-		}
+	
+	if(opts.dump_mode && opts.file_mode){  // dump decoded buffer
+		do_memdump();
 	}
-    //------------------ [ /dump decoded buffer ] ----------------------
-
+    
 	if(opts.mem_monitor){
 		printf("\nMemory Monitor Log:\n");
+
 		i=0;
 		while(mm_points[i].address != 0){
 			if(mm_points[i].hitat != 0){
@@ -1526,26 +1739,31 @@ int run_sc(void)
 			}
 			i++;
 		}
+		
+		for(i=0;i<10;i++){
+			if(emm.bps[i].eip > 0){
+				printf("\tBreakpoint check on addr=0x%x  %s (1st@ 0x%x)\n", emm.bps[i].addr, emm.bps[i].name, emm.bps[i].eip);
+			}
+		}
+
+		for(i=0;i<10;i++){
+			if(emm.hooks[i].eip > 0){
+				printf("\tHook Check on addr=0x%x  %s (1st@ 0x%x)\n", emm.hooks[i].addr, emm.hooks[i].name, emm.hooks[i].eip);
+			}
+		}
+
+		for(i=0;i<10;i++){
+			if(emm.patches[i].eip > 0){
+				printf("\tApi patching found at 0x%x on addr=0x%x  %s\n", emm.patches[i].eip, emm.patches[i].addr, emm.patches[i].name);
+			}
+		}
+
 	}
 
 	if ( opts.graphfile != NULL )
 	{
 		graph_draw(graph);
 	}
-
-/*
-	emu_profile_debug(env->profile);
-
-	if (opts.profile_file)
-		emu_profile_dump(env->profile, opts.profile_file);
-
-	if (eh != NULL)
-		emu_hashtable_free(eh);
-
-	if (graph != NULL)
-		emu_graph_free(graph);
-
-*/
 
 	emu_env_free(env);
 	return 0;
@@ -1555,24 +1773,21 @@ int getpctest(void)
 {
 	struct emu *e = emu_new();
 	int offset=0;
-
-	if ( opts.verbose > 1 )
-	{
-		emu_cpu_debugflag_set(emu_cpu_get(e), instruction_string);
-		emu_log_level_set(emu_logging_get(e),EMU_LOG_DEBUG);
-	}
 	
+	start_color(myellow);
+
 	if ( (offset = emu_shellcode_test(e, (uint8_t *)opts.scode, opts.size)) >= 0 ){
-		printf("Shellcode detected at offset = 0x%08x\n", offset);
+		printf("Shellcode detected at offset = 0x%04x\n", offset);
 		printf("Would you like to start execution there? (y/n):");
-		offset = getchar() == 'y' ? offset : -1;
+		offset = getchar() == 'y' ? offset : -2;
 	}
 	else{
-		printf("Did not detect any shellcode in the file\n");
+		printf("/getpc mode did not detect any shellcode in the file\n");
 		offset = -1;
 	}
 	emu_free(e);
-
+	
+	end_color();
 	return offset;
 }
 
@@ -1588,8 +1803,6 @@ void print_help(void)
 
 	struct help_info help_infos[] =
 	{
-		{"hex", NULL,      "show hex dumps for hook reads/writes"},
-		{"findsc", NULL ,  "Scans file for possible shellcode buffers (getpc mode)"},
 		{"foff", "hexnum" ,"starts execution at file offset"},
 		{"mm", NULL,       "enables Memory Monitor to log access to key addresses."},
 		{"mdll", NULL,     "uses Memory Monitor to log direct access to dll memory (detect hooks)"},
@@ -1611,6 +1824,12 @@ void print_help(void)
 		{"las", "int"	 , "log at step ex. -las 100"},
 		{"laa", "hexnum" , "log at address ex. -laa 0x401020"},
 		{"s", "int"	     , "max number of steps to run (def=1000000, -1 unlimited)"},
+		{"hex", NULL,      "show hex dumps for hook reads/writes"},
+		{"findsc", NULL ,  "Scans file for possible shellcode buffers (brute force)"},
+		{"getpc", NULL ,   "Scans file for possible shellcode buffers (libemu getpc mode)"},
+		{"dump", NULL,     "view hexdump of the target file (can be used with /foff)"},
+		{"disasm", "int" , "Disasm int lines (can be used with /foff)"},
+
 	};
 
 	int i;
@@ -1689,11 +1908,13 @@ void parse_opts(int argc, char* argv[] ){
 		if(sl==3 && strstr(argv[i],"/nc") > 0 )   opts.no_color = true;
 		if(sl==4 && strstr(argv[i],"/hex") > 0 )  opts.show_hexdumps = true;
 		if(sl==7 && strstr(argv[i],"/findsc") > 0 ) opts.getpc_mode = true;
+		if(sl==6 && strstr(argv[i],"/getpc") > 0 ) opts.org_getpc  = 1;
 		if(sl==5 && strstr(argv[i],"/vvvv") > 0 ) opts.verbose = 4;
 		if(sl==4 && strstr(argv[i],"/vvv") > 0 )  opts.verbose = 3;
 		if(sl==3 && strstr(argv[i],"/vv")  > 0 )  opts.verbose = 2;
 		if(sl==3 && strstr(argv[i],"/mm")  > 0 )  opts.mem_monitor = true;
 		if(sl==5 && strstr(argv[i],"/mdll")  > 0 )  opts.mem_monitor_dlls  = true;
+		if(sl==5 && strstr(argv[i],"/dump")  > 0 )  opts.hexdump_file = 1;
 		if(strstr(buf,"/d") > 0 ) opts.dump_mode = true;
 		if(sl==2 && strstr(buf,"/h") > 0 ) print_help();
 		if(strstr(buf,"/S") > 0 ) opts.from_stdin = true;
@@ -1785,6 +2006,14 @@ void parse_opts(int argc, char* argv[] ){
 				exit(0);
 			}
 		    opts.verbosity_onerr = atoi(argv[i+1]);			
+		}
+
+		if(sl==7 && strstr(argv[i],"/disasm") > 0 ){
+			if(i+1 >= argc){
+				printf("Invalid option /disasm must specify #lines to disassemble as next arg\n");
+				exit(0);
+			}
+		    opts.disasm_mode = atoi(argv[i+1]);			
 		}
 
 		if(strstr(buf,"/s") > 0 ){
@@ -1905,6 +2134,8 @@ int main(int argc, char *argv[])
 	int i=0;
 
 	disable_mm_logging = true;
+	memset(&emm, 0, sizeof(emm));
+	memset(&mallocs, 0 , sizeof(mallocs));
 
 	tcgetattr( STDIN_FILENO, &oldt);
 	orgt = oldt;
@@ -1918,6 +2149,23 @@ int main(int argc, char *argv[])
 	
 	parse_opts(argc, argv);
 	loadsc();
+	init_emu();
+
+	if(opts.hexdump_file == 1){
+		if(opts.offset >= opts.size ) opts.offset = 0;
+		if(opts.offset > 0) printf("Starting at offset %x\n", opts.offset);
+		real_hexdump(opts.scode+opts.offset, opts.size-opts.offset,0,false);
+		return 0;
+	}
+
+	if(opts.disasm_mode > 0){
+		if(opts.offset >= opts.size ) opts.offset = 0;
+		if(opts.offset > 0) printf("Starting at offset %x\n", opts.offset);
+		start_color(mgreen);
+		disasm_block(CODE_OFFSET+opts.offset, opts.disasm_mode);
+		end_color();
+		return 0;
+	}
 
 	if(opts.mem_monitor){
 		printf("Memory monitor enabled..\n");
@@ -1928,8 +2176,8 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if(opts.mem_monitor_dlls){
-		printf("Memory monitor for dlls enabled..\n");
+	if(opts.mem_monitor_dlls || opts.mem_monitor){ //-mdll does full logging
+		if(opts.mem_monitor_dlls) printf("Memory monitor for dlls enabled..\n");
 		emu_memory_set_range_access_monitor((uint32_t)mm_range_callback);
 		i=0;
 		while(mm_ranges[i].start_at != 0){
@@ -1939,12 +2187,12 @@ int main(int argc, char *argv[])
 	}
 
 	if(opts.offset > 0){
-		printf("Execution starts at file offset 0x%04x (start byte: %X)\n", opts.offset, opts.scode[opts.offset]);
-	}
-
-	if(opts.getpc_mode){
-		opts.offset = getpctest();
-		if(opts.offset == -1) return 0;
+		printf("Execution starts at file offset %x Opcodes: ", opts.offset);
+		real_hexdump(opts.scode + opts.offset, 10,-1,true);
+		nl();
+		start_color(mgreen);
+		disasm_block(CODE_OFFSET+opts.offset, 5);
+		end_color();
 		nl();
 	}
 
@@ -1991,6 +2239,27 @@ int main(int argc, char *argv[])
 	printf("Using base offset: 0x%x\n", CODE_OFFSET);
 	if(opts.verbose>0) printf("Verbosity: %i\n", opts.verbose);
 
+	if(opts.org_getpc == 1){
+		opts.offset = getpctest();
+		if(opts.offset == -2) return 0;
+		if(opts.offset == -1) {
+			start_color(myellow);
+			printf("Going into brute force mode...\n");
+			end_color();
+			opts.offset =0;
+			opts.getpc_mode = true;
+		}
+	}
+
+	if(opts.getpc_mode){
+		start_color(mpurple);
+		opts.offset = find_sc();
+		end_color();
+		if( opts.offset == -1) return -1;
+		init_emu();
+	}
+
+	nl();
 	run_sc();
 
 	tcsetattr( STDIN_FILENO, TCSANOW, &orgt);
