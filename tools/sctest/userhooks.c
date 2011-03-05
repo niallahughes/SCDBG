@@ -79,18 +79,13 @@
 #include "emu/emu_graph.h"
 #include "emu/emu_string.h"
 #include "emu/emu_hashtable.h"
-
 #include "emu/emu_shellcode.h"
-
-
 #include "userhooks.h"
 #include "options.h"
 #include "nanny.h"
 
 #include <stdint.h>
 #include <stdarg.h>
-
-
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -166,77 +161,6 @@ void set_next_alloc(int size){  //space allocs at 0x1000 bytes for easy offset r
 	//printf("next_alloc=%x\n", next_alloc);
 }
 
-/*void cygwin_safe_path(char* fpath){ //modifies parent string use after logging.. (no reason to bother with this..)
-	
-	if(fpath==NULL)return;
-
-	int i=0;
-	int sz = strlen(fpath);
-	for(i=0;i<sz;i++){
-		if( fpath[i] == '\\') fpath[i] = '_';
-		if( fpath[i] == '<') fpath[i] = '.';
-		if( fpath[i] == '>') fpath[i] = '.';
-		if( fpath[i] == ':') fpath[i] = '.';
-		if( fpath[i] == '"') fpath[i] = '.';
-		if( fpath[i] == '|') fpath[i] = '.';
-		if( fpath[i] == '?') fpath[i] = '.';
-		if( fpath[i] == '*') fpath[i] = '.';
-	}
-}*/
-
-/*void append(struct emu_string *to, const char *dir, char *data, int size)
-{
-	char *saveptr = data;
-
-	struct emu_string *sanestr = emu_string_new();
-
-
-	int i;
-	for (i=0;i<size;i++)
-	{
-		if (data[i] == '\r')
-		{
-
-		}else
-		if ( isprint((int)data[i]))// || isblank(data[i]))
-		{
-			emu_string_append_format(sanestr, "%c", data[i]);
-		}
-		else
-		if (data[i] == '\n')
-		{
-			emu_string_append_char(sanestr, "\n");
-		}
-		else
-		if (data[i] == '\t')
-		{
-			emu_string_append_char(sanestr, "\t");
-		} 
-		else
-		{
-			emu_string_append_format(sanestr, "\\x%02x", (unsigned char)data[i]);
-		}
-	}
-
-	saveptr = NULL;
-
-
-	char *tok;
-	tok  = strtok_r(sanestr->data, "\n", &saveptr);
-//	printf("line %s:%s\n",dir, tok);
-	if (tok != NULL)
-	{
-		emu_string_append_format(to, "%s %s\n", dir, tok); 
-		while ( (tok = strtok_r(NULL,"\n",&saveptr)) != NULL )
-		{
-			emu_string_append_format(to, "%s %s\n", dir, tok);
-//		printf("line %s:%s\n",dir, tok);
-		}
-
-	}
-	emu_string_free(sanestr);
-}*/
-
 void GetSHFolderName(int id, char* buf255){
 	
 	switch(id){
@@ -280,7 +204,7 @@ void GetSHFolderName(int id, char* buf255){
 
 uint32_t user_hook_ExitProcess(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -8);
@@ -306,7 +230,7 @@ VOID WINAPI ExitProcess(
 
 uint32_t user_hook_ExitThread(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -8);
@@ -327,7 +251,7 @@ uint32_t user_hook_ExitThread(struct emu_env *env, struct emu_env_hook *hook, ..
 
 uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -44);
@@ -383,7 +307,7 @@ uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook,
 
 uint32_t user_hook_WaitForSingleObject(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-12);
@@ -420,7 +344,7 @@ uint32_t user_hook_WaitForSingleObject(struct emu_env *env, struct emu_env_hook 
 
 uint32_t user_hook_exit(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-8);
@@ -438,7 +362,7 @@ uint32_t user_hook_exit(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_accept(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-16);
@@ -461,7 +385,7 @@ uint32_t user_hook_accept(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_bind(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-16);
@@ -495,7 +419,7 @@ uint32_t user_hook_bind(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_closesocket(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-8);
@@ -512,7 +436,7 @@ uint32_t user_hook_closesocket(struct emu_env *env, struct emu_env_hook *hook, .
 
 uint32_t user_hook_connect(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-16);
@@ -555,7 +479,7 @@ uint32_t user_hook_connect(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_fclose(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 	//int fclose(FILE *fp);
 
@@ -587,7 +511,7 @@ uint32_t user_hook_fclose(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_fopen(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	char *localfile;
@@ -603,13 +527,6 @@ uint32_t user_hook_fopen(struct emu_env *env, struct emu_env_hook *hook, ...)
 		printf("%x\tfopen(%s, %s) = %x\n", retaddr, filename, mode, 0x4711);
 		return 0x4711;
 	}
-
-	/*
-	char* tmp_file = strdup(filename);
-	cygwin_safe_path(tmp_file);
-	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",tmp_file) == -1) return -1;
-	free(tmp_file);
-	*/
 
 	if ( asprintf(&localfile, "/tmp/XXXXXXXX") == -1) return -1;
 	int fd = mkstemp(localfile);
@@ -627,7 +544,7 @@ uint32_t user_hook_fopen(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_fwrite(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-24);
@@ -669,7 +586,7 @@ uint32_t user_hook_fwrite(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_listen(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-12);
@@ -690,7 +607,7 @@ uint32_t user_hook_listen(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_recv(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-20);
@@ -724,7 +641,7 @@ uint32_t user_hook_recv(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_send(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-16);
@@ -752,7 +669,7 @@ uint32_t user_hook_send(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_socket(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-16);
@@ -774,7 +691,7 @@ uint32_t user_hook_socket(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_WSASocket(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -1*((6*4)+4) );
@@ -801,7 +718,7 @@ uint32_t user_hook_WSASocket(struct emu_env *env, struct emu_env_hook *hook, ...
 
 uint32_t user_hook_CreateFile(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -32);
@@ -834,13 +751,6 @@ HANDLE CreateFile(
 
 	if(opts.interactive_hooks == 0 ) return 0x4444;
 
-	/*
-	char* tmp_file = strdup(lpFileName);
-	cygwin_safe_path(tmp_file);
-	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",tmp_file) == -1) return -1; //exit(-1);
-	free(tmp_file);
-	*/
-
 	if ( asprintf(&localfile, "/tmp/XXXXXXXX") == -1) return -1; //exit(-1);
 	int fd = mkstemp(localfile);
 	close(fd);
@@ -857,7 +767,7 @@ HANDLE CreateFile(
 
 uint32_t user_hook_WriteFile(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -1*((5*4)+4));
@@ -910,7 +820,7 @@ BOOL WriteFile(
 
 uint32_t user_hook_CloseHandle(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-8);
@@ -951,7 +861,7 @@ BOOL CloseHandle(
 
 uint32_t user_hook_URLDownloadToFile(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-24);
@@ -979,7 +889,7 @@ uint32_t user_hook_URLDownloadToFile(struct emu_env *env, struct emu_env_hook *h
 
 uint32_t user_hook_GetProcAddress(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-12);
@@ -1004,7 +914,7 @@ h GetProcAddress(hModule, proc)
 
 uint32_t user_hook_GetSystemDirectoryA(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-12);
@@ -1025,7 +935,7 @@ UINT GetSystemDirectory(
 
 uint32_t user_hook_GetTickCount(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-4);
@@ -1039,7 +949,7 @@ uint32_t user_hook_GetTickCount(struct emu_env *env, struct emu_env_hook *hook, 
  
 uint32_t user_hook_LoadLibraryA(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-8);
@@ -1060,7 +970,7 @@ uint32_t user_hook_LoadLibraryA(struct emu_env *env, struct emu_env_hook *hook, 
 
 uint32_t user_hook__lcreat(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-12);
@@ -1083,10 +993,6 @@ LONG _lcreat(
 
 	
 	char *localfile;
-	/*cygwin_safe_path(fname);
-	if ( asprintf(&localfile, "/tmp/%s-XXXXXX",fname) == -1) return -1; //exit(-1);
-	*/
-
 	if ( asprintf(&localfile, "/tmp/XXXXXXXX") == -1) return -1; //exit(-1);
 	int fd = mkstemp(localfile);
 	close(fd);
@@ -1105,7 +1011,7 @@ LONG _lcreat(
 
 uint32_t user_hook__lwrite(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-16);
@@ -1144,7 +1050,7 @@ LONG _lwrite(
 
 uint32_t user_hook__lclose(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-8);
@@ -1174,7 +1080,7 @@ uint32_t user_hook__lclose(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_malloc(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-8);
@@ -1199,7 +1105,7 @@ void *malloc(
 
 uint32_t user_hook_memset(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-16);
@@ -1228,7 +1134,7 @@ void *memset(
 
 uint32_t user_hook_SetUnhandledExceptionFilter(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-8);
@@ -1259,7 +1165,7 @@ lpFilter
 
 uint32_t user_hook_WinExec(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr =  get_ret(env,-12);
@@ -1288,7 +1194,7 @@ UINT WINAPI WinExec(
 
 uint32_t user_hook_DeleteFileA(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-8);
@@ -1312,7 +1218,7 @@ uint32_t user_hook_DeleteFileA(struct emu_env *env, struct emu_env_hook *hook, .
 
 uint32_t user_hook_GetVersion(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-4);
@@ -1327,7 +1233,7 @@ DWORD WINAPI GetVersion(void);
 
 uint32_t user_hook_GetTempPath(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-12);
@@ -1345,7 +1251,7 @@ DWORD WINAPI GetTempPath(
 
 uint32_t user_hook_Sleep(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-8);
@@ -1366,19 +1272,19 @@ uint32_t user_hook_Sleep(struct emu_env *env, struct emu_env_hook *hook, ...)
 
 uint32_t user_hook_VirtualProtect(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
-	//printf("Hook me Captain Cook!\n");
+	
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -20);
 
 /*
- * BOOL VirtualProtect( 
- *	LPVOID lpAddress, 
- *	DWORD  dwSize, 
- *      DWORD  flNewProtect, 
- *      PDWORD lpflOldProtect 
- *); 
- */
+  BOOL VirtualProtect( 
+ 	LPVOID lpAddress, 
+ 	DWORD  dwSize, 
+       DWORD  flNewProtect, 
+       PDWORD lpflOldProtect 
+ ); 
+*/
 	va_list vl;
 	va_start(vl, hook);
 	int32_t addr = va_arg(vl, int32_t);
@@ -1942,6 +1848,48 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
 }
+
+int32_t	new_user_hook_VirtualProtectEx(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	BOOL WINAPI VirtualProtectEx(
+	  __in   HANDLE hProcess,
+	  __in   LPVOID lpAddress,
+	  __in   SIZE_T dwSize,
+	  __in   DWORD flNewProtect,
+	  __out  PDWORD lpflOldProtect
+	);
+*/
+	uint32_t hProcess;
+	POP_DWORD(c, &hProcess);
+
+	uint32_t address;
+	POP_DWORD(c, &address);
+
+	uint32_t size;
+	POP_DWORD(c, &size);
+
+	uint32_t flNewProtect;
+	POP_DWORD(c, &flNewProtect);
+
+	uint32_t lpflOldProtect;
+	POP_DWORD(c, &lpflOldProtect);
+
+	printf("%x\tVirtualProtectEx(hProc=%x , addr=%x , sz=%x, prot=%x)\n", eip_save, hProcess, address, size, flNewProtect);
+		
+	emu_cpu_reg32_set(c, eax, 1);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+
 
 //need to find a clean way to have these stubs handle multiple api..this is a start anyway..
 //this one can handle logging of 1 or 2 string args..

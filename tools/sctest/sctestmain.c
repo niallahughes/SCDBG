@@ -28,6 +28,11 @@
 /*  this source has been modified from original see changelog 
 
 	TODO: 
+	      it would be nice to be able to load arbitrary dlls on cmdline would need:
+		      pe parsing to load and parse dll format 
+			  either need to call some export before emu_env_w32_new, or cache last peb pointers
+			  used, and load after the fact..maybe could eliminate all internal dlls then?
+
 	      double check mm_ranges to see if any stray noise when api lookup runs -mdll mode
 		  double check exception record in UEF with shellcode test..
 	      dump allocs with -d options
@@ -126,6 +131,13 @@ struct m_allocs{
 	uint32_t size;
 };
 
+struct result{
+	uint32_t final_eip;
+	uint32_t offset;
+	int steps;
+	int org_i;
+};
+
 int malloc_cnt=0;
 struct m_allocs mallocs[21];
 
@@ -140,6 +152,7 @@ struct emu_env *env = 0;
 int graph_draw(struct emu_graph *graph);
 void debugCPU(struct emu *e, bool showdisasm);
 int fulllookupAddress(int eip, char* buf255);
+void init_emu(void);
 
 uint32_t FS_SEGMENT_DEFAULT_OFFSET = 0x7ffdf000;
 int CODE_OFFSET = 0x00401000;
@@ -170,9 +183,9 @@ struct mm_point mm_points[] =
 	{0x7ffdf030,"*PEB (fs30)",0},
 	{0x7ffdf000+4,"Top of thread Stack (fs4)",0},
 	{0x7ffdf000+0x18,"TEB (fs18)",0},
-	{0x7ffdf030+0xC,"peb.InLoadOrderModuleList",0},
-	{0x7ffdf030+0x14,"peb.InMemoryOrderModuleList",0},
-	{0x7ffdf030+0x1C,"peb.InInitializationOrderModuleList",0},
+	{0x251ea0+0xC,"peb.InLoadOrderModuleList",0},
+	{0x251ea0+0x14,"peb.InMemoryOrderModuleList",0},
+	{0x251ea0+0x1C,"peb.InInitializationOrderModuleList",0},
 	{0x252ea0+0x00,"ldrDataEntry.InLoadOrderLinks",0}, /* only addresses here for the [0] entry rest would spam */
 	{0x252ea0+0x08,"ldrDataEntry.InMemoryOrderLinks",0},
 	{0x252ea0+0x10,"ldrDataEntry.InInitializationOrderLinks",0},
@@ -618,10 +631,10 @@ void real_hexdump(unsigned char* str, int len, int offset, bool hexonly){
 	}
 
 	if(aspot%16!=0){//print last ascii segment if not full line
-		int spacer = hexline_length - (aspot*3);
-		while(spacer--)	printf("%s"," ");	
-		asc[aspot]=0x00;
 		if(!hexonly){
+			int spacer = hexline_length - (aspot*3);
+			while(spacer--)	printf("%s"," ");	
+			asc[aspot]=0x00;
 			sprintf(tmp, "%s\n",asc);
 			printf("%s",tmp);
 		}
@@ -1185,6 +1198,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "URLDownloadToCacheFileA", new_user_hook_URLDownloadToCacheFileA, NULL);
 	emu_env_w32_export_new_hook(env, "system", new_user_hook_system, NULL);
 	emu_env_w32_export_new_hook(env, "VirtualAlloc", new_user_hook_VirtualAlloc, NULL);
+	emu_env_w32_export_new_hook(env, "VirtualProtectEx", new_user_hook_VirtualProtectEx, NULL);
 
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
@@ -1195,7 +1209,6 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "ZwTerminateProcess", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "ZwTerminateThread", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "TerminateThread", new_user_hook_GenericStub, NULL);
-
 
 }
 
@@ -1314,67 +1327,111 @@ int handle_seh(struct emu *e,int last_good_eip){
 }
 
 int mini_run(int limit){
+
 	int steps=0;
+
 	while (emu_cpu_parse(cpu) == 0)
 	{
 		if ( emu_cpu_step(cpu) != 0 ) break;
         if(steps >= limit) break;
-		steps++;
+		if(!cpu->repeat_current_instr) steps++;
 	}
 	return steps;
 }
 
+int find_max(struct result results[], int cnt){
+	
+	int i=0;
+	int max_step_cnt=0;
+	int max_offset=0;
+
+	while(1){
+		if(i > cnt) break;
+		if( results[i].steps > max_step_cnt){
+			max_step_cnt = results[i].steps;
+			max_offset = i;
+		}
+		i++;
+	}
+	if(max_step_cnt==0) return -1;
+	return max_offset;
+}
+
 int find_sc(void){ //loose brute force let user decide...
 	
-	int i, ret, s;    
-	int max_step_cnt=0;
-	int max_offset= -1;
+	int i, ret, s, j ;    
 	int limit = 250000;
     char buf[20];
-    int last_offset=0, last_step_cnt=0;
-	bool zero_valid = false;
+    int last_offset= -2, last_step_cnt=0;
+	struct result results[41];
+	struct result sorted[11];
+	int regs[] = {0,0,0,0,0x12fe00,0x12fff0,0,0};
+	char buf255[255];
+
+	j=0;
+	regs[0]=0;
+
+	memset(&results,0,sizeof(struct result)*41);
+	int r_cnt = -1;
 
 	for(i=0; i < opts.size ; i++){
-		emu_memory_write_block(mem, CODE_OFFSET, opts.scode,  opts.size); //fresh copy each time..
+
+		emu_memory_write_block(mem, CODE_OFFSET, opts.scode,  opts.size);
+		for (j=0;j<8;j++) cpu->reg[j] = regs[j];
+
 		if( opts.scode[i] != 0 && get_instr_length( CODE_OFFSET + i ) > 0 ){
 			cpu->eip = CODE_OFFSET + i;
 			s = mini_run(limit);
 			if(s > 100 && cpu->eip > (CODE_OFFSET + i + 100) ){
-				if( s > max_step_cnt){
-					max_step_cnt = s;
-					max_offset = i;
-				}
-				
-				if(last_step_cnt >= s && (last_offset+1) == i ){ //try to not be spamy 
+				if(last_step_cnt >= s && (last_offset+1) == i ){ //try not to spam
 					last_offset++;
-					//printf("hiding\n");
 				}else{
-					if(s == limit)
-						printf("offset= 0x%04x   steps=MAX  final_eip= %08x ops= ", i, cpu->eip );
-					else
-						printf("offset= 0x%04x   steps=%-7d final_eip= %08x   ops= ", i, s, cpu->eip );
-					
-					real_hexdump(opts.scode + i, 10, -1, true);
-					nl();
-
-					if(i==0) zero_valid = true;
+					r_cnt++;
+					if(r_cnt > 40) break;
+					results[r_cnt].final_eip = cpu->eip;
+					results[r_cnt].offset = i;
+					results[r_cnt].steps  = s;
+					results[r_cnt].org_i  = i;
 					last_offset = i;
 					last_step_cnt = s;
 				}
 			}
 		}
 
+
 	}
 
-	ret = -1;
-	if( max_offset >= 0 ){
-		ret = read_hex("\nEnter offset to start execution at (-1 = quit)",(char*)&buf);
-		if(ret == 0 && !zero_valid) ret = -1;
-	}else{
+	if( r_cnt == -1 ){
 		printf("No shellcode detected..\n");
+		return -1;
 	}
-	
-	return ret;
+
+	//let them choose from the top 10
+	for(i=0;i<10;i++){
+		s = find_max(results,40);
+		if(s == -1) break;
+		sorted[i] = results[s];
+		fulllookupAddress(results[s].final_eip, (char*)&buf255); 
+		if(results[s].steps == limit) 
+			printf("%d) offset=0x%-8x   steps=MAX    final_eip=%-8x   %s", i, results[s].offset, results[s].final_eip, buf255 );
+		 else 
+			printf("%d) offset= 0x%-8x   steps=%-8d   final_eip= %-8x   %s", i, results[s].offset , results[s].steps , results[s].final_eip, buf255 );
+		/*real_hexdump(opts.scode + results[s].offset, 10, -1, true);
+		nl();
+		start_color(mgreen);
+		disasm_block(CODE_OFFSET + results[s].offset, 5);
+		end_color();*/
+		nl();
+		results[s].steps = -1; //zero out this entry so it wont be chosen again
+	}	
+
+	if(i==1){
+		return sorted[0].offset; //there was only one to choose from just run it..
+	}
+
+	ret = read_int("\nEnter index:",(char*)&buf);
+	if(ret > (i-1) ) return -1; // i = number of results in sorted..
+	return sorted[ret].offset;
 
 }
 
@@ -1435,11 +1492,8 @@ void init_emu(void){
 	/**/
 
 	//some of the shellcodes look for hooks set on some API, lets add some mem so it exists to check
-    emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile
-	
+    emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile	
 	emu_memory_write_block(mem, CODE_OFFSET, opts.scode,  opts.size);
-
-	printf("Emu Initilization Complete..\n");
 
 }
 
@@ -1696,13 +1750,11 @@ int run_sc(void)
 				cpu->eip = last_good_eip;
 				debugCPU(e,true);
 				
-				break;
+				if(opts.verbose < 3) break; //exit step loop if we didnt enter debug shell
 			}
 
 
-		}  //---------------------- end of step loop
-
-
+		} 
 
 		if ( opts.graphfile != NULL )
 		{
@@ -1718,12 +1770,9 @@ int run_sc(void)
 		}
 
 //			printf("\n");
-	}
+	} //---------------------- end of step loop
 
 	printf("\nstepcount %i\n",j);
-
-//--------------------------------------- END OF STEP LOOP ---------------------------------
-
 	
 	if(opts.dump_mode && opts.file_mode){  // dump decoded buffer
 		do_memdump();
@@ -2150,6 +2199,7 @@ int main(int argc, char *argv[])
 	parse_opts(argc, argv);
 	loadsc();
 	init_emu();
+	printf("Initilization Complete..\n");
 
 	if(opts.hexdump_file == 1){
 		if(opts.offset >= opts.size ) opts.offset = 0;
@@ -2252,9 +2302,7 @@ int main(int argc, char *argv[])
 	}
 
 	if(opts.getpc_mode){
-		start_color(mpurple);
 		opts.offset = find_sc();
-		end_color();
 		if( opts.offset == -1) return -1;
 		init_emu();
 	}
