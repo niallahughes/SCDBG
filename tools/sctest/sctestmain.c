@@ -33,9 +33,6 @@
 			  either need to call some export before emu_env_w32_new, or cache last peb pointers
 			  used, and load after the fact..maybe could eliminate all internal dlls then?
 
-	      double check mm_ranges to see if any stray noise when api lookup runs -mdll mode
-		  double check exception record in UEF with shellcode test..
-	      dump allocs with -d options
 		  display bug, on breakpoint and on error disasm shown twice
 		  add string deref for pointers in stack dump, deref regs and dword dump?
 		  opcodes A9 and 2F could use supported (pretty easy ones too i think)
@@ -170,11 +167,12 @@ extern uint32_t next_alloc;
 
 char *regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
 
+//http://en.wikipedia.org/wiki/FLAGS_register_(computing)
 	                    /* 0     1     2     3      4       5       6     7 */
-const char *eflagm[] = { "CF", "  ", "PF", "  " , "AF"  , "    ", "ZF", "SF", 
-	                     "TF", "IF", "DF", "OF" , "IOPL", "IOPL", "NT", "  ",
-	                     "RF", "VM", "AC", "VIF", "RIP" , "ID"  , "  ", "  ",
-	                     "  ", "  ", "  ", "   ", "    ", "    ", "  ", "  "};
+const char *eflagm[] = { "CF", ""  , "PF", ""   , "AF"  , ""    , "ZF", "SF", 
+	                     "TF", "IF", "DF", "OF" , "IOPL", "IOPL", "NT", "",
+	                     "RF", "VM", "AC", "VIF", "RIP" , "ID"  , "", "",
+	                     "",   "",   "",   "",    "",     "",     "", ""};
 
 struct mm_point mm_points[] = 
 { //http://en.wikipedia.org/wiki/Win32_Thread_Information_Block
@@ -362,6 +360,23 @@ void mm_range_callback(char id, char mode, uint32_t address){
 	printf("\t%s\n", mode == 'r' ? "READ" : "WRITE");
 	end_color();
 	 
+}
+
+uint32_t symbol2addr(char* symbol){
+	if(symbol == NULL) return 0;
+	if(strcmp(symbol,"peb") == 0) return 0x00251ea0;
+	if(strcmp(symbol,"fs0") == 0) return FS_SEGMENT_DEFAULT_OFFSET;
+	int numdlls=0;
+	while ( env->env.win->loaded_dlls[numdlls] != 0 ){
+		struct emu_env_w32_dll *dll = env->env.win->loaded_dlls[numdlls]; 
+		struct emu_hashtable_item *ehi = emu_hashtable_search(dll->exports_by_fnname, (void *)symbol);	
+		if ( ehi != 0 ){ 
+			struct emu_env_hook *hook = (struct emu_env_hook *)ehi->value;
+			return dll->baseaddr + hook->hook.win->virtualaddr;
+		}	
+		numdlls++;
+	}
+	return 0;
 }
 
 void symbol_lookup(char* symbol){
@@ -553,15 +568,20 @@ int file_length(FILE *f)
 void dumpFlags(struct emu_cpu *c){
 
 	char *fmsg;
-	fmsg = (char *)malloc(32*3+1);
-	memset(fmsg, 0, 32*3+1);
+	int sz = 500; //32*3+1
+	fmsg = (char *)malloc(sz);
+	memset(fmsg, 0, sz);
+	sprintf(fmsg, "EFL %x ", cpu->eflags);
+
 	int i;
 	for ( i=0;i<32;i++ )
 	{
 		if ( CPU_FLAG_ISSET(c, i) )
 		{
-			strcat(fmsg, eflagm[i]);
-			strcat(fmsg," ");
+			if(strlen(eflagm[i]) > 0){
+				strcat(fmsg, eflagm[i]);
+				strcat(fmsg," ");
+			}
 		}
 	}
 
@@ -623,7 +643,7 @@ void real_hexdump(unsigned char* str, int len, int offset, bool hexonly){
 			}
 			if(offset >=0){
 				offset += 16;
-				printf("%04x   ", offset);
+				if(i+1 != len) printf("%04x   ", offset);
 			}
 			aspot=0;
 		}
@@ -1040,7 +1060,7 @@ void interactive_command(struct emu *e){
 			if(emu_memory_read_block(mem, base, buf,  size) == -1){
 				printf("Memory read failed...\n");
 			}else{
-				hexdump(buf,size);
+				real_hexdump(buf,size,base,false);
 			}
 			free(buf);
 
@@ -1199,6 +1219,10 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "system", new_user_hook_system, NULL);
 	emu_env_w32_export_new_hook(env, "VirtualAlloc", new_user_hook_VirtualAlloc, NULL);
 	emu_env_w32_export_new_hook(env, "VirtualProtectEx", new_user_hook_VirtualProtectEx, NULL);
+	emu_env_w32_export_new_hook(env, "SetFilePointer", new_user_hook_SetFilePointer, NULL);
+	emu_env_w32_export_new_hook(env, "ReadFile", new_user_hook_ReadFile, NULL);
+	emu_env_w32_export_new_hook(env, "strstr", new_user_hook_strstr, NULL);
+	emu_env_w32_export_new_hook(env, "strtoul", new_user_hook_strtoul, NULL);
 
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
@@ -1209,6 +1233,10 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "ZwTerminateProcess", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "ZwTerminateThread", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "TerminateThread", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "FreeLibrary", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "GlobalFree", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "GetCurrentProcess", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "TerminateProcess", new_user_hook_GenericStub, NULL);
 
 }
 
@@ -1866,12 +1894,12 @@ void print_help(void)
 		{"e", "int"	     , "verbosity on error (3 = debug shell)"},
 		{"t", "int"	     , "time to delay (ms) between steps when v=1 or 2"},
 		{"h",  NULL		 , "show this help"},
-		{"bp", "hexnum"  , "set breakpoint (shortcut for -laa <hexaddr> -vvv)"},
+		{"bp", "hexnum"  , "set breakpoint on addr or api name (same as -laa <hexaddr> -vvv)"},
 		{"bs", "int"     , "break on step (shortcut for -las <int> -vvv)"},
 		{"a",  NULL		 , "adjust offsets to file offsets not virtual"},
 		{"d",  NULL	     , "dump unpacked shellcode if changed (requires /f)"},
 		{"las", "int"	 , "log at step ex. -las 100"},
-		{"laa", "hexnum" , "log at address ex. -laa 0x401020"},
+		{"laa", "hexnum" , "log at address or api ex. -laa 0x401020 or -laa ReadFile"},
 		{"s", "int"	     , "max number of steps to run (def=1000000, -1 unlimited)"},
 		{"hex", NULL,      "show hex dumps for hook reads/writes"},
 		{"findsc", NULL ,  "Scans file for possible shellcode buffers (brute force)"},
@@ -1985,6 +2013,15 @@ void parse_opts(int argc, char* argv[] ){
 		    CODE_OFFSET = strtol(argv[i+1], NULL, 16);			
 		}
 
+		if(sl==6 && strstr(argv[i],"/fopen") > 0 ){
+			if(i+1 >= argc){
+				printf("Invalid option /foopen must specify file to open as next arg\n");
+				exit(0);
+			}
+			opts.fopen = fopen(argv[i+1],"r");
+			printf("fopen(%s) = %x\n", argv[i+1], (int)opts.fopen);
+		}
+
 		if(sl==5 && strstr(argv[i],"/foff") > 0 ){
 			if(i+1 >= argc){
 				printf("Invalid option /foff must specify start file offset as next arg\n");
@@ -1998,7 +2035,8 @@ void parse_opts(int argc, char* argv[] ){
 				printf("Invalid option /bp must specify hex breakpoint addr as next arg\n");
 				exit(0);
 			}
-		    opts.log_after_va = strtol(argv[i+1], NULL, 16);
+			opts.log_after_va = symbol2addr(argv[i+1]);
+			if(opts.log_after_va == 0) opts.log_after_va = strtol(argv[i+1], NULL, 16);
 			opts.verbosity_after = 3;
 		}
 
@@ -2016,7 +2054,8 @@ void parse_opts(int argc, char* argv[] ){
 				printf("Invalid option /laa must specify a hex addr as next arg\n");
 				exit(0);
 			}
-		    opts.log_after_va = strtol(argv[i+1], NULL, 16);			
+			opts.log_after_va = symbol2addr(argv[i+1]);
+			if(opts.log_after_va == 0) opts.log_after_va = strtol(argv[i+1], NULL, 16);			
 		}
 
 		if(sl==6 && strstr(argv[i],"/redir") > 0 ){
@@ -2196,9 +2235,10 @@ int main(int argc, char *argv[])
     signal(SIGTERM,restore_terminal);
 	atexit(atexit_restore_terminal);
 	
+	init_emu(); //so env is loaded for sym lookup in parse_opts, no shellcode written yet..
 	parse_opts(argc, argv);
 	loadsc();
-	init_emu();
+	init_emu(); //now full init with shellcode..sloppy yah but...
 	printf("Initilization Complete..\n");
 
 	if(opts.hexdump_file == 1){

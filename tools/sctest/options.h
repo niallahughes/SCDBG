@@ -30,6 +30,7 @@ struct run_time_options
 	int   hexdump_file;
 	int   disasm_mode;
 	uint32_t step_over_bp;
+	FILE *fopen;
 
 	struct 
 	{

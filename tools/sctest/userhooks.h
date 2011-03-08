@@ -64,4 +64,8 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_VirtualProtectEx(struct emu_env *env, struct emu_env_hook *hook);
 
-
+//added 3-7-11 w/fopen option..
+int32_t	new_user_hook_SetFilePointer(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_ReadFile(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_strstr(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_strtoul(struct emu_env *env, struct emu_env_hook *hook);

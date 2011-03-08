@@ -1,5 +1,12 @@
 		Changelog for libemu
 
+3.7.11 w/fopen option..
+	exe - added /fopen option for shellcode which scans w/ GetFileSize()
+		  added hooks for SetFilePointer, ReadFile, strstr, strtoul, FreeLibrary,
+		  GlobalFree, GetCurrentProcess, TerminateProcess
+		  /bp and /laa now accept api names to break at
+	dll - enabled support for TEST A8 and A9 (seems ok but need more testing..)
+
 2.12.11
     exe - bugfixes/cleanups, new brute force findsc mode, CreateProcessA now supports shellcode
 	      which uses its function prolog to put args inline. hexdump mode to examine shellcode

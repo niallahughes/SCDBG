@@ -96,10 +96,13 @@
 extern int CODE_OFFSET;
 extern uint32_t FS_SEGMENT_DEFAULT_OFFSET;
 extern void hexdump(unsigned char*, int);
+extern int file_length(FILE *f);
 extern void add_malloc(uint32_t, uint32_t);
 extern struct emu_memory *mem;
 extern struct emu_cpu *cpu;    //these two are global in main code
 extern bool disable_mm_logging;
+int last_GetSizeFHand = -44;
+int rep_count=0;
 
 uint32_t next_alloc = 0x60000; //these increment so we dont walk on old allocs
 
@@ -1526,14 +1529,16 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 
     ZwTerminateProcess, ZwTerminateThread, each 2 args
     BOOL WINAPI TerminateThread(inout HANDLE hThread, DWORD dwExitCode)
+	FreeLibrary(hMod)
+	handle GetCurrentProcess(void)
 );
 
 
 */
 
-	int arg_count=0;
-	int ret_val = 0xb16b00b5;
-    int log_val = -1; //stub support optional logging of one int arg
+	int arg_count = -1 ;
+	int ret_val   =  1 ;
+    int log_val   = -1 ; //stub support optional logging of one int arg
 
 	char* func = hook->hook.win->fnname;
 
@@ -1542,14 +1547,35 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 		arg_count = 6;
 	}
 
+	if(strcmp(func, "GetCurrentProcess") ==0 ){
+		arg_count = 0;
+	}
+
+	if(strcmp(func, "FreeLibrary") ==0 ){
+		log_val = get_ret(env,0);  //hmodule
+		arg_count = 1;
+	}
+
+	if(strcmp(func, "GlobalFree") ==0 ){
+		log_val = get_ret(env,0);  //hmem
+		arg_count = 1;
+	}
+
 	if(strcmp(func, "GetFileSize") == 0){
 		log_val = get_ret(env,0); //handle
+		ret_val = -1;
+		if((int)opts.fopen > 0){
+			if( log_val == (int)opts.fopen || log_val == 4 || log_val == 1){ //scanners start at 1 or 4 so no spam this way..
+				ret_val = file_length(opts.fopen)-1;
+			}
+		}
 		arg_count = 2;
 	}
 
 	if(strcmp(func, "ZwTerminateProcess") == 0 
 		|| strcmp(func, "ZwTerminateThread") == 0
 		|| strcmp(func, "TerminateThread") == 0
+		|| strcmp(func, "TerminateProcess") == 0
 	){
 		log_val = get_ret(env,0); //handle
 		arg_count = 2;
@@ -1562,7 +1588,7 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 		arg_count = 4;
 	}
 
-	if(arg_count==0){
+	if(arg_count == -1 ){
 		printf("invalid use of generic stub no match found for %s",func);
 		exit(0);
 	}
@@ -1572,11 +1598,35 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	
 	cpu->reg[esp] = r_esp;
 
-	if(log_val == -1){
-		printf("%x\t%s()\n", eip_save, func );
-	}else{
-		printf("%x\t%s(%x)\n", eip_save, func, log_val );
-	}
+	/*int interval = 25;
+	char *x = "|//-|\\-";
+	//char tmp[22] = {0};
+	int i=0;
+
+	//i hate spam...
+	if(strcmp(func, "GetFileSize") == 0){
+		if( (last_GetSizeFHand+1) == log_val || (last_GetSizeFHand+4) == log_val){ 
+			if(rep_count == (interval*5+1) ){
+				rep_count=0;
+				for(i=0;i<6;i++) printf("\b \b");
+				printf("%x", log_val);
+			}else{
+				if(rep_count % interval == 0){
+					printf("%c\b", x[rep_count/interval]);
+				}
+				rep_count++;
+			}
+		}else{
+			printf("%x\t%s(%x) = %x\n", eip_save, func, log_val, ret_val );
+		}
+		last_GetSizeFHand = log_val;
+	}else{*/ 
+		if(log_val == -1){
+			printf("%x\t%s() = %x\n", eip_save, func, ret_val );
+		}else{
+			printf("%x\t%s(%x) = %x\n", eip_save, func, log_val, ret_val );
+		}
+	//}
 
 	emu_cpu_reg32_set(c, eax, ret_val);
 	emu_cpu_eip_set(c, eip_save);
@@ -1657,7 +1707,7 @@ int32_t	new_user_hook_GlobalAlloc(struct emu_env *env, struct emu_env_hook *hook
 
 	uint32_t baseMemAddress = next_alloc;
 
-	if(size > 0 && size < 9000){
+	if(size > 0 && size < 0x99000){
 		set_next_alloc(size);
 		void *buf = malloc(size);
 		memset(buf,0,size);
@@ -1703,7 +1753,7 @@ int32_t	new_user_hook_MapViewOfFile(struct emu_env *env, struct emu_env_hook *ho
 
 	if(size==0) size = 5000; //size was specified in CreateFileMapping...so we default it...
 
-	if(size > 0 && size < 9000){
+	if(size > 0 && size < 0x99000){
 		set_next_alloc(size);
 		void *buf = malloc(size);
 		memset(buf,0,size);
@@ -1832,7 +1882,7 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 
 	uint32_t baseMemAddress = next_alloc;
 
-	if(size < 9000){
+	if(size < 0x99000){
 		set_next_alloc(size);
 		printf("%x\tVirtualAlloc(base=%x , sz=%x) = %x\n", eip_save, address, size, baseMemAddress);
 		if(size < 1024) size = 1024;
@@ -1973,6 +2023,205 @@ int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hoo
 
 
 	emu_cpu_reg32_set(c, eax, ret_val);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+
+int32_t	new_user_hook_SetFilePointer(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	
+	DWORD WINAPI SetFilePointer(
+  __in         HANDLE hFile,
+  __in         LONG lDistanceToMove,
+  __inout_opt  PLONG lpDistanceToMoveHigh,
+  __in         DWORD dwMoveMethod
+);
+
+
+*/
+	uint32_t hfile;
+	uint32_t lDistanceToMove;
+	uint32_t lDistanceToMoveHigh;
+	uint32_t dwMoveMethod;
+
+	POP_DWORD(c, &hfile);
+	POP_DWORD(c, &lDistanceToMove);
+	POP_DWORD(c, &lDistanceToMoveHigh);
+	POP_DWORD(c, &dwMoveMethod);
+
+	if(dwMoveMethod > 2 || dwMoveMethod < 0) dwMoveMethod = 3; //this shouldnt happen..
+	char* method[4] = {"FILE_BEGIN", "FILE_CURRENT", "FILE_END","UNKNOWN"};
+
+	printf("%x\tSetFilePointer(hFile=%x, dist=%x, %s)\n", eip_save, hfile, lDistanceToMove, method[dwMoveMethod]);
+
+	if((int)opts.fopen > 0){
+		if( hfile == (int)opts.fopen || hfile == 4){ //scanners start at 4 so no spam this way..
+			if(dwMoveMethod == 0) fseek (opts.fopen, lDistanceToMove, SEEK_SET);
+			if(dwMoveMethod == 1) fseek (opts.fopen, lDistanceToMove, SEEK_CUR);
+			if(dwMoveMethod == 2) fseek (opts.fopen, lDistanceToMove, SEEK_END);
+		}
+	}
+
+	emu_cpu_reg32_set(c, eax, lDistanceToMove);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_ReadFile(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*	
+	BOOL WINAPI ReadFile(
+	  __in         HANDLE hFile,
+	  __out        LPVOID lpBuffer,
+	  __in         DWORD nNumberOfBytesToRead,
+	  __out_opt    LPDWORD lpNumberOfBytesRead,
+	  __inout_opt  LPOVERLAPPED lpOverlapped
+	);
+*/
+	uint32_t hfile;
+	uint32_t lpBuffer;
+	uint32_t numBytes;
+	uint32_t lpNumBytes;
+	uint32_t lpOverlap;
+
+	POP_DWORD(c, &hfile);
+	POP_DWORD(c, &lpBuffer);
+	POP_DWORD(c, &numBytes);
+	POP_DWORD(c, &lpNumBytes);
+	POP_DWORD(c, &lpOverlap);
+
+	printf("%x\tReadFile(hFile=%x, buf=%x, numBytes=%x)\n", eip_save, hfile, lpBuffer, numBytes);
+	
+	numBytes++;
+	if((int)opts.fopen > 0){
+		if( hfile == (int)opts.fopen || hfile == 4){ //scanners start at 4 so no spam this way..
+			char* tmp = malloc(numBytes);
+			fread(tmp, numBytes, 1, opts.fopen);
+			emu_memory_write_block(mem, lpBuffer,tmp,numBytes);
+			free(tmp);
+		}
+	}
+
+	//todo support interactive mode here..(no file read functions yet supported w/nanny for i mode)
+	//nanny should only be invoked for opening with write access..allow interactive mode to open
+	//real files if in read mode?
+
+	if(lpNumBytes != 0) emu_memory_write_dword(mem, lpNumBytes, numBytes);
+
+	emu_cpu_reg32_set(c, eax, 1);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+//scans for first null in emu memory from address. returns emu address of null or limit
+uint32_t emu_string_length(uint32_t addr, int scan_limit){
+	uint32_t o = addr;
+	char b;
+
+	emu_memory_read_byte(mem, o, &b);
+	while(b != 0){
+		o++;
+		if(o - addr > scan_limit) break;
+		emu_memory_read_byte(mem, o, &b);
+	}
+
+	return o;
+}
+
+
+int32_t	new_user_hook_strstr(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*	
+	char *strstr(const char *s1, const char *s2);
+*/
+	uint32_t s1;
+	uint32_t s2;
+	uint32_t ret=0;
+	POP_DWORD(c, &s1);
+	POP_DWORD(c, &s2);
+	
+	struct emu_string *find = emu_string_new();
+
+	if(s2==0){
+		ret = s1;
+	}else{
+		uint32_t len = emu_string_length(s1, 0x6000);
+		emu_memory_read_string(mem, s2, find, 255);
+
+		if(len > 0){
+			char* tmp = malloc(len);
+			emu_memory_read_block(mem, s1, tmp, len);
+			ret = (int)strstr(tmp, (char*)find->data);
+			if(ret != 0){
+				uint32_t delta = ret - (int)tmp;
+				ret = s1 + delta;
+			}
+			free(tmp);
+		}
+
+	}
+
+	printf("%x\tstrstr(buf=%x, find=\"%s\") = %x\n", eip_save, (int)s1, emu_string_char(find), ret);
+	
+	emu_string_free(find);
+	emu_cpu_reg32_set(c, eax, ret);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+
+int32_t	new_user_hook_strtoul(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*	
+	unsigned long strtoul(const char *restrict str, char **restrict endptr, int base);
+*/
+	uint32_t s1;
+	uint32_t s2;
+	uint32_t base;
+	uint32_t ret=0;
+	POP_DWORD(c, &s1);
+	POP_DWORD(c, &s2);
+	POP_DWORD(c, &base);
+	
+	struct emu_string *arg = emu_string_new();
+	uint32_t len = emu_string_length(s1, 0x6000);
+	emu_memory_read_string(mem, s1, arg, len);
+	ret = strtoul( emu_string_char(arg), NULL, base);
+
+	printf("%x\tstrtoul(buf=%x -> \"%s\", base=%d) = %x\n", eip_save, s1, emu_string_char(arg), base, ret);
+	
+	emu_string_free(arg);
+	emu_cpu_reg32_set(c, eax, ret);
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
 }
