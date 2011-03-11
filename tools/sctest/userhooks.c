@@ -103,8 +103,21 @@ extern struct emu_cpu *cpu;    //these two are global in main code
 extern bool disable_mm_logging;
 int last_GetSizeFHand = -44;
 int rep_count=0;
+bool gfs_scan_warn = false;
 
 uint32_t next_alloc = 0x60000; //these increment so we dont walk on old allocs
+
+struct SYSTEMTIME { /* 16 bytes */
+  unsigned short wYear;
+  unsigned short wMonth;
+  unsigned short wDayOfWeek;
+  unsigned short wDay;
+  unsigned short wHour;
+  unsigned short wMinute;
+  unsigned short wSecond;
+  unsigned short wMilliseconds;
+}  ;
+
 
 //by the time our user call is called, the args have already been popped off the stack.
 //in r/t that just means that esp has been adjusted and cleaned up for function to 
@@ -1531,19 +1544,36 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
     BOOL WINAPI TerminateThread(inout HANDLE hThread, DWORD dwExitCode)
 	FreeLibrary(hMod)
 	handle GetCurrentProcess(void)
+
+    HANDLE WINAPI CreateThread(
+	  __in_opt   LPSECURITY_ATTRIBUTES lpThreadAttributes,
+	  __in       SIZE_T dwStackSize,
+	  __in       LPTHREAD_START_ROUTINE lpStartAddress,
+	  __in_opt   LPVOID lpParameter,
+	  __in       DWORD dwCreationFlags,
+	  __out_opt  LPDWORD lpThreadId
+	);
+
+    void WINAPI GetSystemTime(
+	  __out  LPSYSTEMTIME lpSystemTime
+	);
+
+
 );
 
 
 */
+	int dwCreationFlags=0;
 
 	int arg_count = -1 ;
 	int ret_val   =  1 ;
-    int log_val   = -1 ; //stub support optional logging of one int arg
+    int log_val   = -1 ; //stub support optional logging of two int arg
+	int log_val2  = -1 ; 
 
 	char* func = hook->hook.win->fnname;
 
 	if(strcmp(func, "CreateFileMappingA") ==0 ){
-		log_val = get_ret(env,-16);  //sizelow
+		log_val = get_ret(env,16);  //sizelow
 		arg_count = 6;
 	}
 
@@ -1551,9 +1581,26 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 		arg_count = 0;
 	}
 
+	if(strcmp(func, "GetSystemTime") ==0 ){
+		arg_count = 0;
+		log_val = get_ret(env,0);  //lpSystime
+		struct SYSTEMTIME st;
+		memset(&st,7, 16);
+		st.wYear = 2011;
+		emu_memory_write_block( mem, log_val, &st, 16);
+	}
+
 	if(strcmp(func, "FreeLibrary") ==0 ){
 		log_val = get_ret(env,0);  //hmodule
 		arg_count = 1;
+	}
+
+	if(strcmp(func, "CreateThread") ==0 ){
+		log_val = get_ret(env,8);  //start address
+		log_val2 = get_ret(env,12);  //parameter
+		dwCreationFlags = get_ret(env,16);
+		//todo handle optional threadID parameter in case of resume thread...(make this its own stub)
+		arg_count = 6;
 	}
 
 	if(strcmp(func, "GlobalFree") ==0 ){
@@ -1598,39 +1645,44 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	
 	cpu->reg[esp] = r_esp;
 
-	/*int interval = 25;
-	char *x = "|//-|\\-";
-	//char tmp[22] = {0};
-	int i=0;
+	bool nolog = false;
 
 	//i hate spam...
 	if(strcmp(func, "GetFileSize") == 0){
 		if( (last_GetSizeFHand+1) == log_val || (last_GetSizeFHand+4) == log_val){ 
-			if(rep_count == (interval*5+1) ){
-				rep_count=0;
-				for(i=0;i<6;i++) printf("\b \b");
-				printf("%x", log_val);
-			}else{
-				if(rep_count % interval == 0){
-					printf("%c\b", x[rep_count/interval]);
-				}
-				rep_count++;
+			if(!gfs_scan_warn){
+				printf("%x\tGetFileSize(%x) - open file handle scanning occuring - hiding output...\n",eip_save, log_val);
+				gfs_scan_warn = true;
 			}
+			nolog = true;
 		}else{
-			printf("%x\t%s(%x) = %x\n", eip_save, func, log_val, ret_val );
+			gfs_scan_warn = false;
 		}
 		last_GetSizeFHand = log_val;
-	}else{*/ 
+	}
+
+	if(!nolog){
 		if(log_val == -1){
 			printf("%x\t%s() = %x\n", eip_save, func, ret_val );
-		}else{
+		}else if(log_val2 == -1){
 			printf("%x\t%s(%x) = %x\n", eip_save, func, log_val, ret_val );
+		}else{
+			printf("%x\t%s(%x, %x) = %x\n", eip_save, func, log_val, log_val2, ret_val );
 		}
-	//}
+	}
 
-	emu_cpu_reg32_set(c, eax, ret_val);
-	emu_cpu_eip_set(c, eip_save);
+	if(strcmp(func, "CreateThread") ==0 && (dwCreationFlags == 0 || dwCreationFlags == 0x10000) ){ /* actually should check for bitflags */
+		PUSH_DWORD(c, log_val2);
+		PUSH_DWORD(c, eip_save);
+		emu_cpu_eip_set(c, log_val);
+		printf("\tTransferring execution to threadstart...\n");
+	}else{
+		emu_cpu_reg32_set(c, eax, ret_val);
+		emu_cpu_eip_set(c, eip_save);
+	}
+	
 	return 0;
+
 }
 
 
@@ -1970,6 +2022,12 @@ int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hoo
 	  __in  DWORD_PTR dwContext
 	);
 
+  BOOL SHRegGetBoolUSValue(
+	  __in      LPCTSTR pszSubKey,
+	  __in_opt  LPCTSTR pszValue,
+	  __in      BOOL fIgnoreHKCU,
+	  __in      BOOL fDefault
+	);
 
 */
 	int arg_count=0;
@@ -1992,8 +2050,15 @@ int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hoo
 		arg_count = 6;
 	}
 
+	if(strcmp(func, "SHRegGetBoolUSValueA") ==0 ){
+		log_sarg = get_ret(env,0);  //pszSubKey
+		log_sarg2 = get_ret(env,4);  //pszValue
+		arg_count = 4;
+		ret_val = 0;
+	}
+
 	if(arg_count==0){
-		printf("invalid use of generic stub no match found for %s",func);
+		printf("invalid use of generic stub 2 string no match found for %s",func);
 		exit(0);
 	}
 
@@ -2221,6 +2286,103 @@ int32_t	new_user_hook_strtoul(struct emu_env *env, struct emu_env_hook *hook)
 	printf("%x\tstrtoul(buf=%x -> \"%s\", base=%d) = %x\n", eip_save, s1, emu_string_char(arg), base, ret);
 	
 	emu_string_free(arg);
+	emu_cpu_reg32_set(c, eax, ret);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_GetTempFileNameA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*	
+	UINT WINAPI GetTempFileName(
+	  __in   LPCTSTR lpPathName,
+	  __in   LPCTSTR lpPrefixString,
+	  __in   UINT uUnique,
+	  __out  LPTSTR lpTempFileName
+	);
+*/
+	uint32_t s1;
+	uint32_t s2;
+	uint32_t unique;
+	uint32_t out_buf;
+	uint32_t ret=0;
+	uint32_t org_unique;
+
+	int prefix_len=0;
+	int path_len=0;
+	char* s_unique = 0;
+	char* s_out=0;
+
+	POP_DWORD(c, &s1);
+	POP_DWORD(c, &s2);
+	POP_DWORD(c, &unique);
+	POP_DWORD(c, &out_buf);
+
+	org_unique = unique;
+
+	if(s1==0){
+		ret = 0;
+		emu_cpu_reg32_set(c, eax, 0);
+		emu_cpu_eip_set(c, eip_save);
+		return 0;
+	}
+
+	struct emu_string *path = emu_string_new();
+	struct emu_string *prefix = emu_string_new();
+
+	//printf("s1=%x, s2=%x , unique=%x, out_buf=%x\n", s1,s2, unique, out_buf);
+
+	emu_memory_read_string(mem, s1, path, 255);
+	emu_memory_read_string(mem, s2, prefix, 3);
+
+	char* s_path = emu_string_char(path);
+	char* s_prefix = emu_string_char(prefix);
+
+	if(s_path == 0){
+		s_path = malloc(10); //memleak
+		strcpy(s_path,"");
+	}else{
+		path_len = strlen(s_path);
+	}
+
+	if(s_prefix == 0){
+		s_prefix = malloc(10); //memleak
+		strcpy(s_prefix,"");
+	}else{
+		prefix_len = strlen(s_prefix);
+	}
+
+    if(unique==0) unique = 0xBAAD;
+	asprintf(&s_unique, "%X", unique);
+
+	uint32_t slen = path_len + prefix_len + strlen(s_unique) + 15;
+
+	if(slen > 255){
+		ret = 0;
+	}else{
+		ret = unique;
+		s_out = malloc(300);
+		sprintf(s_out, "%s\%s%s.TMP", s_path, s_prefix, s_unique);
+		emu_memory_write_block(mem, out_buf, s_out, strlen(s_out));
+	}
+	
+	printf("%x\tGetFileFilePath(path=%s, prefix=%x (%s), unique=%x, buf=%x) = %X\n", eip_save, 
+			 s_path, s2, s_prefix, org_unique, out_buf, ret);
+
+	if(ret!=0) printf("\t Path = %s\n", s_out);
+
+	if(s_out != 0) free(s_out);
+	free(s_unique);
+	emu_string_free(path);
+	emu_string_free(prefix);
+
 	emu_cpu_reg32_set(c, eax, ret);
 	emu_cpu_eip_set(c, eip_save);
 	return 0;

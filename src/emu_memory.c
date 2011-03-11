@@ -389,7 +389,7 @@ int32_t emu_memory_read_block(struct emu_memory *m, uint32_t addr, void *dest, s
 		return emu_memory_read_block(m, oaddr + cb, dest + cb, len - cb);
 	}
 }
-
+/* original
 int32_t emu_memory_read_string(struct emu_memory *m, uint32_t addr, struct emu_string *s, uint32_t maxsize)
 {
 	uint32_t i = 0;
@@ -417,6 +417,36 @@ int32_t emu_memory_read_string(struct emu_memory *m, uint32_t addr, struct emu_s
 	s->size = i;
 
 	return emu_memory_read_block(m, addr, s->data, i);
+}*/
+
+//modified so that even if it fails it still returns an empty string..makes logging easier.. -dzzie 3.10.11
+int32_t emu_memory_read_string(struct emu_memory *m, uint32_t addr, struct emu_string *s, uint32_t maxsize)
+{
+	uint32_t i = 0;
+	
+	void *address;
+	
+	while( 1 )
+	{
+		if (i > maxsize - 1) return -1;
+		address = translate_addr(m, addr + i);
+		if( address == NULL ) break;
+		if( *(uint8_t *)address == '\0' ) break;
+		i++;
+	}
+
+	if(address == NULL){
+		s->data = malloc(4);
+		strcpy(s->data, "");
+		s->size = 0;
+		return 0;
+	}else{
+		s->data = malloc(i + 1);
+		memset(s->data, 0, i + 1);
+		s->size = i;
+		return emu_memory_read_block(m, addr, s->data, i);
+	}
+
 }
 
 

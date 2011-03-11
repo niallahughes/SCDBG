@@ -60,6 +60,7 @@ extern struct emu_env_w32_dll_export urlmon_exports[];
 extern struct emu_env_w32_dll_export ntdll_exports[];
 extern struct emu_env_w32_dll_export user32_exports[];
 extern struct emu_env_w32_dll_export shell32_exports[];
+extern struct emu_env_w32_dll_export shlwapi_exports[];
 
 
 

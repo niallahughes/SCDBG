@@ -6,6 +6,24 @@ if( ret != 0 ) \
 else \
 	cpu->reg[esp] += 4; }
 
+#define PUSH_DWORD(cpu, arg)							\
+{														\
+	uint32_t pushme;									\
+	bcopy(&(arg),  &pushme, 4);							\
+	if (cpu->reg[esp] < 4)								\
+	{													\
+		emu_errno_set((cpu)->emu, ENOMEM);				\
+		emu_strerror_set((cpu)->emu,					\
+		"ran out of stack space writing a dword\n");	\
+		return -1;										\
+	}													\
+	cpu->reg[esp]-=4;									\
+	{																			\
+		int32_t memret = emu_memory_write_dword(cpu->mem, cpu->reg[esp], pushme);	\
+		if (memret != 0)														\
+			return memret;														\
+	}																			\
+}
 
 uint32_t user_hook_ExitProcess(struct emu_env *env, struct emu_env_hook *hook, ...);
 uint32_t user_hook_ExitThread(struct emu_env *env, struct emu_env_hook *hook, ...);
@@ -69,3 +87,6 @@ int32_t	new_user_hook_SetFilePointer(struct emu_env *env, struct emu_env_hook *h
 int32_t	new_user_hook_ReadFile(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_strstr(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_strtoul(struct emu_env *env, struct emu_env_hook *hook);
+
+int32_t	new_user_hook_GetTempFileNameA(struct emu_env *env, struct emu_env_hook *hook);
+

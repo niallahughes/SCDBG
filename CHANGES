@@ -1,11 +1,17 @@
 		Changelog for libemu
 
+3.10.11
+	dll - added support for shlwapi.dll, loaddll - made sure all image size is mapped
+	      emu_memory_read_string, never returns a null pointer now always a valid object (even if blank)
+		  might add dll setting -readanyaddr if sc expects certain addresses mapped..
+	exe - added hooks: GetTempFileNameA, CreateThread, SHRegGetBoolUSValueA, GetSystemTime
+
 3.7.11 w/fopen option..
 	exe - added /fopen option for shellcode which scans w/ GetFileSize()
 		  added hooks for SetFilePointer, ReadFile, strstr, strtoul, FreeLibrary,
 		  GlobalFree, GetCurrentProcess, TerminateProcess
 		  /bp and /laa now accept api names to break at
-	dll - enabled support for TEST A8 and A9 (seems ok but need more testing..)
+	dll - enabled support for TEST A8 and A9 (seems ok with ZF and PF but need more testing..)
 
 2.12.11
     exe - bugfixes/cleanups, new brute force findsc mode, CreateProcessA now supports shellcode

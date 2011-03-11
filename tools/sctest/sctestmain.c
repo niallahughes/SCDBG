@@ -1166,6 +1166,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_load_dll(env->env.win,"ws2_32.dll");
 	emu_env_w32_load_dll(env->env.win,"wininet.dll");
 	emu_env_w32_load_dll(env->env.win,"ntdll.dll");
+	emu_env_w32_load_dll(env->env.win,"shlwapi.dll");
 
 	emu_env_w32_export_hook(env, "ExitProcess", user_hook_ExitProcess, NULL);
 	emu_env_w32_export_hook(env, "ExitThread", user_hook_ExitThread, NULL);
@@ -1223,12 +1224,11 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "ReadFile", new_user_hook_ReadFile, NULL);
 	emu_env_w32_export_new_hook(env, "strstr", new_user_hook_strstr, NULL);
 	emu_env_w32_export_new_hook(env, "strtoul", new_user_hook_strtoul, NULL);
+	emu_env_w32_export_new_hook(env, "GetTempFileNameA", new_user_hook_GetTempFileNameA, NULL);
 
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "CreateFileMappingA", new_user_hook_GenericStub, NULL);
-	emu_env_w32_export_new_hook(env, "InternetOpenA", new_user_hook_GenericStub2String, NULL);
-	emu_env_w32_export_new_hook(env, "InternetOpenUrlA", new_user_hook_GenericStub2String, NULL);
 	emu_env_w32_export_new_hook(env, "InternetReadFile", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "ZwTerminateProcess", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "ZwTerminateThread", new_user_hook_GenericStub, NULL);
@@ -1237,6 +1237,14 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "GlobalFree", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "GetCurrentProcess", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "TerminateProcess", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "CreateThread", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "GetSystemTime", new_user_hook_GenericStub, NULL);
+
+	//-----handled by the generic stub 2 string
+	emu_env_w32_export_new_hook(env, "InternetOpenA", new_user_hook_GenericStub2String, NULL);
+	emu_env_w32_export_new_hook(env, "InternetOpenUrlA", new_user_hook_GenericStub2String, NULL);
+	emu_env_w32_export_new_hook(env, "SHRegGetBoolUSValueA", new_user_hook_GenericStub2String, NULL);
+
 
 }
 
@@ -1906,7 +1914,7 @@ void print_help(void)
 		{"getpc", NULL ,   "Scans file for possible shellcode buffers (libemu getpc mode)"},
 		{"dump", NULL,     "view hexdump of the target file (can be used with /foff)"},
 		{"disasm", "int" , "Disasm int lines (can be used with /foff)"},
-
+		{"fopen", "file" , "Opens a handle to <file> for use with GetFileSize() scanners"},
 	};
 
 	int i;
@@ -2238,7 +2246,8 @@ int main(int argc, char *argv[])
 	init_emu(); //so env is loaded for sym lookup in parse_opts, no shellcode written yet..
 	parse_opts(argc, argv);
 	loadsc();
-	init_emu(); //now full init with shellcode..sloppy yah but...
+	init_emu(); //now full init with shellcode..sloppy yah but...	
+
 	printf("Initilization Complete..\n");
 
 	if(opts.hexdump_file == 1){
