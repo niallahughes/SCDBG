@@ -571,6 +571,8 @@ FFARPROC WINAPI GetProcAddress(
 	logDebug(env->emu, "procname name is '%s'\n", emu_string_char(procname));
 
 	int i;
+	emu_cpu_reg32_set(c, eax, 0); //set default value of 0 (not found) //dzzie
+
 	for ( i=0; env->env.win->loaded_dlls[i] != NULL; i++ )
 	{
 		if ( env->env.win->loaded_dlls[i]->baseaddr == module )
@@ -593,7 +595,7 @@ FFARPROC WINAPI GetProcAddress(
 				emu_cpu_reg32_set(c, eax, dll->baseaddr + hook->hook.win->virtualaddr);
 				break;
 			}
-		}
+		}	
 	}
 
 	//dzzie
@@ -1230,7 +1232,7 @@ UINT WINAPI WinExec(
 	POP_DWORD(c, &p_cmdline);
 
 	struct emu_string *cmdstr = emu_string_new();
-	emu_memory_read_string(emu_memory_get(env->emu), p_cmdline, cmdstr, 256);
+	emu_memory_read_string(emu_memory_get(env->emu), p_cmdline, cmdstr, 1256);
 
 
 

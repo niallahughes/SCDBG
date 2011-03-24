@@ -1,5 +1,20 @@
 		Changelog for libemu
 
+3.xx.11
+    exe - added hooks: RevertToSelf, RtlExitUserThread
+
+3.18.11 
+    dll - added support for advapi32, shdocvw, 
+        - GetProcAddress retval now defaults to 0 now.
+        - WinExec cmdline read bumped up to 1256 chars
+	exe - added hooks: RTLDestroyEnvirnoment, LoadLibraryExA, GetModuleFileNameA 
+	    - fixed stack adjust bug with some api (+=)
+	    - added opcodes to GetProcAddress function for sig scanner technique.
+		- WriteFile buf addr -> real addr (was dll alloc addr) 
+		- disasm/reg display now shown pre-execution 
+		- -- and ++ option to adjust GetFileSize value (sometimes necessary)
+		- added /hooks option to dump list of supported api (currently 85 functions & 11 dlls)
+
 3.10.11
 	dll - added support for shlwapi.dll, loaddll - made sure all image size is mapped
 	      emu_memory_read_string, never returns a null pointer now always a valid object (even if blank)

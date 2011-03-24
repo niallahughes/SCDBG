@@ -26,6 +26,7 @@
  *******************************************************************************/
 
 /*  this source has been modified from original see changelog 
+    (switched reg[esp] mods in userhooks.c to be += instead of -= whoops) 3.15.11
 
 	TODO: 
 	      it would be nice to be able to load arbitrary dlls on cmdline would need:
@@ -35,7 +36,7 @@
 
 		  display bug, on breakpoint and on error disasm shown twice
 		  add string deref for pointers in stack dump, deref regs and dword dump?
-		  opcodes A9 and 2F could use supported (pretty easy ones too i think)
+		  opcode 2F could use supported 
 
 		  [0] should return memory not mapped error...why doesnt it? (-1 too)
 			answer: any call to write memory created memory if it didnt exist.
@@ -189,6 +190,7 @@ struct mm_point mm_points[] =
 	{0x252ea0+0x10,"ldrDataEntry.InInitializationOrderLinks",0},
 	{0x00253320,   "ldrDataEntry.BaseDllName",0},
 	{0x7c862e62,   "UnhandledExceptionFilter",0},
+	{0x7c80ada9,   "GetProcAddress Signature Scanner",0},
 	{0,NULL,0},
 };
 
@@ -780,7 +782,7 @@ unsigned int read_hex(char* prompt, char* buf){
 }
 
 int read_string(char* prompt, char* buf){
-	int nBytes = 20;
+	int nBytes = 60;
 	int i=0;
 
 	printf("%s", prompt);
@@ -905,7 +907,7 @@ void interactive_command(struct emu *e){
 	disable_mm_logging = true;
 
 	char *buf=0;
-	char *tmp = (char*)malloc(21);
+	char *tmp = (char*)malloc(61);
 	char lookup[255];
 	unsigned int base=0;
 	unsigned int size=0;
@@ -1167,6 +1169,8 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_load_dll(env->env.win,"wininet.dll");
 	emu_env_w32_load_dll(env->env.win,"ntdll.dll");
 	emu_env_w32_load_dll(env->env.win,"shlwapi.dll");
+	emu_env_w32_load_dll(env->env.win,"advapi32.dll");
+	emu_env_w32_load_dll(env->env.win,"shdocvw.dll");
 
 	emu_env_w32_export_hook(env, "ExitProcess", user_hook_ExitProcess, NULL);
 	emu_env_w32_export_hook(env, "ExitThread", user_hook_ExitThread, NULL);
@@ -1192,11 +1196,11 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_linux_syscall_hook(env, "socket", user_hook_socket, NULL);
 
 
-	//-----------------------added dz(+ support in dll also)
+	//-----------------------added dz(+ support in dll also) userhooks..
 	emu_env_w32_export_hook(env, "GetProcAddress", user_hook_GetProcAddress, NULL);
 	emu_env_w32_export_hook(env, "GetSystemDirectoryA", user_hook_GetSystemDirectoryA, NULL);
 	emu_env_w32_export_hook(env, "GetTickCount", user_hook_GetTickCount, NULL);
-	emu_env_w32_export_hook(env, "LoadLibraryA", user_hook_LoadLibraryA, NULL);
+	//emu_env_w32_export_hook(env, "LoadLibraryA", user_hook_LoadLibraryA, NULL);
 	emu_env_w32_export_hook(env, "_lcreat", user_hook__lcreat, na);
 	emu_env_w32_export_hook(env, "_lwrite", user_hook__lwrite, na);
 	emu_env_w32_export_hook(env, "_lclose", user_hook__lclose, na);
@@ -1209,6 +1213,8 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_hook(env, "GetTempPathA", user_hook_GetTempPath, NULL);
 	emu_env_w32_export_hook(env, "Sleep", user_hook_Sleep, NULL);
 	emu_env_w32_export_hook(env, "VirtualProtect", user_hook_VirtualProtect, NULL);
+
+	// new hooks
 	emu_env_w32_export_new_hook(env, "GetModuleHandleA", new_user_hook_GetModuleHandleA, NULL);
 	emu_env_w32_export_new_hook(env, "GlobalAlloc", new_user_hook_GlobalAlloc, NULL);
 	emu_env_w32_export_new_hook(env, "CreateProcessInternalA", new_user_hook_CreateProcessInternalA, NULL);
@@ -1225,6 +1231,9 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "strstr", new_user_hook_strstr, NULL);
 	emu_env_w32_export_new_hook(env, "strtoul", new_user_hook_strtoul, NULL);
 	emu_env_w32_export_new_hook(env, "GetTempFileNameA", new_user_hook_GetTempFileNameA, NULL);
+	emu_env_w32_export_new_hook(env, "LoadLibraryExA", new_user_hook_LoadLibrary, NULL);
+	emu_env_w32_export_new_hook(env, "LoadLibraryA", new_user_hook_LoadLibrary, NULL);
+	emu_env_w32_export_new_hook(env, "GetModuleFileNameA", new_user_hook_GetModuleFileNameA, NULL);
 
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
@@ -1239,7 +1248,10 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "TerminateProcess", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "CreateThread", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "GetSystemTime", new_user_hook_GenericStub, NULL);
-
+	emu_env_w32_export_new_hook(env, "RtlDestroyEnvironment", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "RevertToSelf", new_user_hook_GenericStub, NULL);
+	emu_env_w32_export_new_hook(env, "RtlExitUserThread", new_user_hook_GenericStub, NULL);
+	
 	//-----handled by the generic stub 2 string
 	emu_env_w32_export_new_hook(env, "InternetOpenA", new_user_hook_GenericStub2String, NULL);
 	emu_env_w32_export_new_hook(env, "InternetOpenUrlA", new_user_hook_GenericStub2String, NULL);
@@ -1531,6 +1543,13 @@ void init_emu(void){
     emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile	
 	emu_memory_write_block(mem, CODE_OFFSET, opts.scode,  opts.size);
 
+	//some shellcode locates GetProcAddress by the following signature
+	//.text:GetProcAddress+9 8B 7D 0C                          mov     edi, [ebp+lpProcName]
+    //.text:GetProcAddress+C BB FF FF 00 00                    mov     ebx, 0FFFFh
+	unsigned char gp[25] = {0x8B, 0xFF, 0x55, 0x8B, 0xEC, 0x51, 0x51, 0x53, 0x57, 0x8B, 0x7D, 0x0C, 0xBB, 0xFF, 0xFF, 0x00, 0x00, 0x3B, 0xFB, 0x0F, 0x86, 0xD1, 0xF2, 0xFF, 0xFF};
+	emu_memory_write_block(mem, 0x7c80ada0, gp, 25); 
+
+
 }
 
 int run_sc(void)
@@ -1622,7 +1641,7 @@ int run_sc(void)
 
 		hook = emu_env_w32_eip_check(env);
 
-		if ( hook != NULL  && cpu->eip != 0x7c862e62 && cpu->eip != 0x7e431f7b ) //ignore UnhandledExceptionFilter , messagebeep
+		if ( hook != NULL  && cpu->eip != 0x7c862e62 ) //ignore UnhandledExceptionFilter 
 		{					
 			if ( opts.graphfile != NULL )
 			{
@@ -1673,7 +1692,7 @@ int run_sc(void)
 			parse_ok = true;
 			in_repeat = cpu->repeat_current_instr;
 
-			if(opts.verbose > 0 && in_repeat == false) show_disasm(e);
+			if(opts.verbose > 0 && in_repeat == false) debugCPU(e,true); //show_disasm(e);
 
 //--- PARSE
 			ret = emu_cpu_parse(emu_cpu_get(e));
@@ -1699,7 +1718,8 @@ int run_sc(void)
 
 					if ( opts.graphfile != NULL && ev->data == NULL )
 					{
-						iv = instr_vertex_new(eipsave, emu_cpu_get(e)->instr_string);
+						emu_disasm_addr(emu_cpu_get(e),eipsave,disasm);
+						iv = instr_vertex_new(eipsave, disasm);
 						emu_vertex_data_set(ev, iv);
 					}
 				}
@@ -1737,7 +1757,7 @@ int run_sc(void)
 								if(strstr(disasm,"ret") > 0){
 									opts.exec_till_ret = false;
 									opts.verbose = 3; //interactive dbg prompt
-									show_disasm(e);
+									//show_disasm(e);
 									start_color(myellow);
 									printf("Exec till return hit!\n");
 									end_color();
@@ -1747,14 +1767,14 @@ int run_sc(void)
 								emu_disasm_addr(emu_cpu_get(e),last_good_eip,disasm);
 								if(strstr(disasm, opts.break_at_instr) > 0){
 									opts.verbose = 3; //interactive dbg prompt
-									show_disasm(e);
+									//show_disasm(e);
 									start_color(myellow);
 									printf("Break at instruction hit!\n");
 									end_color();
 								}
 							}
 							firstchance = true;						//step was ok..give it another chance at exception.
-							if(opts.verbose > 0) debugCPU(e,false);	//now show the registers after the instruction executed 
+							//if(opts.verbose > 0) debugCPU(e,false);	//now show the registers after the instruction executed 
 						}
 					
 				} //end hook != null
@@ -1863,8 +1883,8 @@ int getpctest(void)
 
 	if ( (offset = emu_shellcode_test(e, (uint8_t *)opts.scode, opts.size)) >= 0 ){
 		printf("Shellcode detected at offset = 0x%04x\n", offset);
-		printf("Would you like to start execution there? (y/n):");
-		offset = getchar() == 'y' ? offset : -2;
+		//printf("Would you like to start execution there? (y/n):");
+		//offset = getchar() == 'y' ? offset : -2;
 	}
 	else{
 		printf("/getpc mode did not detect any shellcode in the file\n");
@@ -1915,6 +1935,8 @@ void print_help(void)
 		{"dump", NULL,     "view hexdump of the target file (can be used with /foff)"},
 		{"disasm", "int" , "Disasm int lines (can be used with /foff)"},
 		{"fopen", "file" , "Opens a handle to <file> for use with GetFileSize() scanners"},
+		{"- /+", NULL , "increments or decrements GetFileSize, can use multiple times"},
+		{"hooks", NULL , "dumps a list all implemented api hooks"},
 	};
 
 	int i;
@@ -1951,6 +1973,33 @@ void print_help(void)
 
 }
 
+void show_supported_hooks(void){
+	
+	int i=0;
+	int j=0;
+	int tot=0;
+
+	struct nanny *na = nanny_new();
+	set_hooks(env,na);
+
+	while ( env->env.win->loaded_dlls[i] != 0 ){
+		struct emu_env_w32_dll *dll = env->env.win->loaded_dlls[i]; 
+		printf("\r\n%s\r\n", dll->dllname );
+		while( dll->exportx[j].virtualaddr != 0 ){
+			if( dll->exportx[j].userhook > 0 || dll->exportx[j].fnhook > 0 )
+			{
+				printf("\t%s\r\n", dll->exportx[j].fnname);
+				tot++;
+			}
+			j++;
+		}
+		i++;
+		j=0;
+	}
+	//libemu 2.0 is 5/51
+	printf("\r\n  Dlls: %d\r\n Hooks: %d\r\n", i, tot);
+	exit(0);
+}
 
 /*
 	this func may be a bit verbose and ugly, but I cant crash it or get it to bug out
@@ -1987,6 +2036,8 @@ void parse_opts(int argc, char* argv[] ){
 		buf[1] = argv[i][1];
 		buf[2] = '0';
 		 		
+		if(strstr(buf,"/-") > 0 ) opts.adjust_getfsize-- ;
+		if(strstr(buf,"/+") > 0 ) opts.adjust_getfsize++ ;
 		if(strstr(buf,"/a") > 0 ) opts.adjust_offsets = true ;
 		if(strstr(buf,"/i") > 0 ) opts.interactive_hooks = 1;
 		if(strstr(buf,"/v") > 0 ) opts.verbose++;	
@@ -2000,6 +2051,7 @@ void parse_opts(int argc, char* argv[] ){
 		if(sl==3 && strstr(argv[i],"/mm")  > 0 )  opts.mem_monitor = true;
 		if(sl==5 && strstr(argv[i],"/mdll")  > 0 )  opts.mem_monitor_dlls  = true;
 		if(sl==5 && strstr(argv[i],"/dump")  > 0 )  opts.hexdump_file = 1;
+		if(sl==6 && strstr(argv[i],"/hooks")  > 0 ) show_supported_hooks();
 		if(strstr(buf,"/d") > 0 ) opts.dump_mode = true;
 		if(sl==2 && strstr(buf,"/h") > 0 ) print_help();
 		if(strstr(buf,"/S") > 0 ) opts.from_stdin = true;
@@ -2027,6 +2079,12 @@ void parse_opts(int argc, char* argv[] ){
 				exit(0);
 			}
 			opts.fopen = fopen(argv[i+1],"r");
+			if((int)opts.fopen < 1){
+				start_color(myellow);
+				printf("FAILED TO OPEN %s", argv[i+1]);
+				end_color();
+				exit(0);
+			}
 			printf("fopen(%s) = %x\n", argv[i+1], (int)opts.fopen);
 		}
 
@@ -2250,6 +2308,8 @@ int main(int argc, char *argv[])
 
 	printf("Initilization Complete..\n");
 
+	if(opts.adjust_getfsize != 0) printf("Adjusting GetFileSize by %d\n", opts.adjust_getfsize);
+	
 	if(opts.hexdump_file == 1){
 		if(opts.offset >= opts.size ) opts.offset = 0;
 		if(opts.offset > 0) printf("Starting at offset %x\n", opts.offset);

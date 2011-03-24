@@ -105,6 +105,9 @@ int last_GetSizeFHand = -44;
 int rep_count=0;
 bool gfs_scan_warn = false;
 
+int nextFhandle = 0;
+
+uint32_t MAX_ALLOC  = 0x1000000;
 uint32_t next_alloc = 0x60000; //these increment so we dont walk on old allocs
 
 struct SYSTEMTIME { /* 16 bytes */
@@ -117,6 +120,13 @@ struct SYSTEMTIME { /* 16 bytes */
   unsigned short wSecond;
   unsigned short wMilliseconds;
 }  ;
+
+int get_fhandle(void){
+	nextFhandle+=4;
+	return nextFhandle;
+}
+
+
 
 
 //by the time our user call is called, the args have already been popped off the stack.
@@ -764,8 +774,9 @@ HANDLE CreateFile(
 
 	char *localfile;
 	printf("%x\tCreateFile(%s)\n",retaddr,lpFileName);
-
-	if(opts.interactive_hooks == 0 ) return 0x4444;
+	
+	uint32_t handle = get_fhandle();
+	if(opts.interactive_hooks == 0 ) return handle;
 
 	if ( asprintf(&localfile, "/tmp/XXXXXXXX") == -1) return -1; //exit(-1);
 	int fd = mkstemp(localfile);
@@ -773,12 +784,11 @@ HANDLE CreateFile(
 
 	FILE *f = fopen(localfile,"w");
 
-	printf("\tInteractive mode local file: %s\n", localfile);
+	printf("\tInteractive mode file:%s h=%x\n", localfile, handle);
 
-	uint32_t handle;
 	nanny_add_file(hook->hook.win->userdata, localfile, &handle, f);
 
-	return (uint32_t)handle;
+	return handle;
 }
 
 uint32_t user_hook_WriteFile(struct emu_env *env, struct emu_env_hook *hook, ...)
@@ -787,6 +797,7 @@ uint32_t user_hook_WriteFile(struct emu_env *env, struct emu_env_hook *hook, ...
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env, -1*((5*4)+4));
+	uint32_t realBuf = get_ret(env, -16);
 
 /*
 BOOL WriteFile(
@@ -808,7 +819,7 @@ BOOL WriteFile(
 	/* int *lpOverlapped 		    =*/(void)va_arg(vl, int*);
 	va_end(vl);
 
-	printf("%x\tWriteFile(h=%x, buf=%x)\n",retaddr,(int)hFile,(int)lpBuffer);
+	printf("%x\tWriteFile(h=%x, buf=%x, len=%x)\n",retaddr, (int)hFile, realBuf, nNumberOfBytesToWrite);
 
 	if(opts.show_hexdumps && nNumberOfBytesToWrite > 0){
 		int display_size = nNumberOfBytesToWrite;
@@ -826,7 +837,7 @@ BOOL WriteFile(
 	if (nf != NULL){
 		written = fwrite(lpBuffer, nNumberOfBytesToWrite, 1, nf->real_file);
 	}else{
-		//printf("shellcode tried to write data to not existing handle\n");
+		printf("WriteFile invalid handle = %x, buf=%x, len=%x\n", (int)hFile, realBuf, nNumberOfBytesToWrite );
 	}
 
 	return 1;
@@ -910,18 +921,16 @@ uint32_t user_hook_GetProcAddress(struct emu_env *env, struct emu_env_hook *hook
 
 	uint32_t retaddr =  get_ret(env,-12);
 
-/*
-h GetProcAddress(hModule, proc)
-);
-*/
+/* GetProcAddress(hModule, proc) */
 
 	va_list vl;
 	va_start(vl, hook);
-	/*int hMod  = */ va_arg(vl,  int);
+	int hMod  = va_arg(vl,  int);
 	char* api = va_arg(vl, char *); 
 	va_end(vl);
 
 	printf("%x\tGetProcAddress(%s)\n",retaddr, api);
+	if(hMod == 0 || cpu->reg[eax] == 0 ) printf("\tLookup not found: module base = %x\n", hMod);  
 
 	return 0;
 
@@ -962,7 +971,7 @@ uint32_t user_hook_GetTickCount(struct emu_env *env, struct emu_env_hook *hook, 
 
 }
 
- 
+/* 
 uint32_t user_hook_LoadLibraryA(struct emu_env *env, struct emu_env_hook *hook, ...)
 {
 	
@@ -980,7 +989,7 @@ uint32_t user_hook_LoadLibraryA(struct emu_env *env, struct emu_env_hook *hook, 
 
 	return 0;
 
-}
+}*/
 
 
 
@@ -1005,7 +1014,8 @@ LONG _lcreat(
 
 	printf("%x\t_lcreate(%s)\n",retaddr,fname);
 	
-	if(opts.interactive_hooks == 0) return 1;
+	uint32_t handle = get_fhandle();
+	if(opts.interactive_hooks == 0) return handle;
 
 	
 	char *localfile;
@@ -1015,12 +1025,11 @@ LONG _lcreat(
 
 	FILE *f = fopen(localfile,"w");
 
-	printf("\tInteractive mode local file: %s\n", localfile);
+	printf("\tInteractive mode local file: %s=%d  h\n", localfile, handle);
 
-	uint32_t handle;
 	nanny_add_file(hook->hook.win->userdata, localfile, &handle, f);
 
-	return (uint32_t)handle;
+	return handle;
 
 }
 
@@ -1342,11 +1351,12 @@ int32_t	new_user_hook_GetModuleHandleA(struct emu_env *env, struct emu_env_hook 
 
 	int i=0;
 	int found_dll = 0;
+	emu_cpu_reg32_set(c, eax, 0); //default = fail
+
 	for (i=0; env->env.win->loaded_dlls[i] != NULL; i++)
 	{
 		if (strncasecmp(env->env.win->loaded_dlls[i]->dllname, dllname, strlen(env->env.win->loaded_dlls[i]->dllname)) == 0)
 		{
-			//logDebug(env->emu, "found dll %s, baseaddr is %08x \n",env->env.win->loaded_dlls[i]->dllname,env->env.win->loaded_dlls[i]->baseaddr);
 			emu_cpu_reg32_set(c, eax, env->env.win->loaded_dlls[i]->baseaddr);
 			found_dll = 1;
 			break;
@@ -1360,19 +1370,11 @@ int32_t	new_user_hook_GetModuleHandleA(struct emu_env *env, struct emu_env_hook 
             emu_cpu_reg32_set(c, eax, env->env.win->loaded_dlls[i]->baseaddr);
 			found_dll = 1;
         }
-        else
-        {
-            //logDebug(env->emu, "error could not find %s\n", dllname);
-            emu_cpu_reg32_set(c, eax, 0x0);
-        }
 	}
 
-	//printf("%x\tGetModuleHandleA(%s) = %x\n",eip_save,  dllname, emu_cpu_reg32_get(c,eax) );
 	printf("%x\tGetModuleHandleA(%s)\n",eip_save,  dllname);
 
 	emu_string_free(s_filename);
-
-	emu_cpu_reg32_set(c, eax, 0);
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
 }
@@ -1581,6 +1583,10 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 		arg_count = 0;
 	}
 
+	if(strcmp(func, "RtlDestroyEnvironment") ==0 ){
+		arg_count = 1;
+	}
+
 	if(strcmp(func, "GetSystemTime") ==0 ){
 		arg_count = 0;
 		log_val = get_ret(env,0);  //lpSystime
@@ -1608,15 +1614,25 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 		arg_count = 1;
 	}
 
+	if(strcmp(func, "RevertToSelf") ==0 ){
+		arg_count = 0;
+	}
+
 	if(strcmp(func, "GetFileSize") == 0){
 		log_val = get_ret(env,0); //handle
 		ret_val = -1;
 		if((int)opts.fopen > 0){
 			if( log_val == (int)opts.fopen || log_val == 4 || log_val == 1){ //scanners start at 1 or 4 so no spam this way..
-				ret_val = file_length(opts.fopen)-1;
+				ret_val = file_length(opts.fopen)+opts.adjust_getfsize; //sometimes necessary..
 			}
 		}
 		arg_count = 2;
+	}
+
+	if(strcmp(func, "RtlExitUserThread") ==0 ){
+		arg_count = 1;
+		log_val = get_ret(env,0); //handle
+		opts.steps =0;
 	}
 
 	if(strcmp(func, "ZwTerminateProcess") == 0 
@@ -1641,7 +1657,7 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	}
 
 	int r_esp = cpu->reg[esp];
-	r_esp -= arg_count*4;
+	r_esp += arg_count*4;
 	
 	cpu->reg[esp] = r_esp;
 
@@ -1718,7 +1734,7 @@ int32_t	new_user_hook_CreateProcessInternalA(struct emu_env *env, struct emu_env
 
 	if(p_cmdline == 0) emu_memory_read_dword(mem,stack_addr+4, &p_cmdline);
 
-	stack_addr -= 12*4;
+	stack_addr += 12*4;
 	cpu->reg[esp] = stack_addr;
 
 	if(p_cmdline !=0){
@@ -1759,7 +1775,7 @@ int32_t	new_user_hook_GlobalAlloc(struct emu_env *env, struct emu_env_hook *hook
 
 	uint32_t baseMemAddress = next_alloc;
 
-	if(size > 0 && size < 0x99000){
+	if(size > 0 && size < MAX_ALLOC){
 		set_next_alloc(size);
 		void *buf = malloc(size);
 		memset(buf,0,size);
@@ -1805,7 +1821,7 @@ int32_t	new_user_hook_MapViewOfFile(struct emu_env *env, struct emu_env_hook *ho
 
 	if(size==0) size = 5000; //size was specified in CreateFileMapping...so we default it...
 
-	if(size > 0 && size < 0x99000){
+	if(size > 0 && size < MAX_ALLOC){
 		set_next_alloc(size);
 		void *buf = malloc(size);
 		memset(buf,0,size);
@@ -1848,7 +1864,7 @@ int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_en
 	emu_memory_read_dword(mem,stack_addr+8, &p_fname);
 	emu_memory_read_dword(mem,stack_addr+12, &bufsz);
 
-	stack_addr -= 6*4;
+	stack_addr += 6*4;
 	cpu->reg[esp] = stack_addr;
 
 	struct emu_string *s_url = emu_string_new();
@@ -1886,7 +1902,7 @@ int32_t	new_user_hook_system(struct emu_env *env, struct emu_env_hook *hook)
 
 	emu_memory_read_dword(mem,stack_addr+0, &p_url);
 
-	stack_addr -= 1*4;
+	stack_addr += 1*4;
 	cpu->reg[esp] = stack_addr;
 
 	struct emu_string *s_url = emu_string_new();
@@ -1934,7 +1950,7 @@ int32_t	new_user_hook_VirtualAlloc(struct emu_env *env, struct emu_env_hook *hoo
 
 	uint32_t baseMemAddress = next_alloc;
 
-	if(size < 0x99000){
+	if(size < MAX_ALLOC){
 		set_next_alloc(size);
 		printf("%x\tVirtualAlloc(base=%x , sz=%x) = %x\n", eip_save, address, size, baseMemAddress);
 		if(size < 1024) size = 1024;
@@ -2040,11 +2056,13 @@ int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hoo
 	char* func = hook->hook.win->fnname;
 
 	if(strcmp(func, "InternetOpenA") ==0 ){
+		//printf("InternetOpenA\n");
 		log_sarg = get_ret(env,0);  //lpszAgent
 		arg_count = 5;
 	}
 
 	if(strcmp(func, "InternetOpenUrlA") ==0 ){
+		//printf("InternetOpenUrlA\n");
 		log_sarg = get_ret(env,4);  //url
 		sarg1_len = 500;
 		arg_count = 6;
@@ -2062,10 +2080,11 @@ int32_t	new_user_hook_GenericStub2String(struct emu_env *env, struct emu_env_hoo
 		exit(0);
 	}
 
-	int r_esp = cpu->reg[esp];
-	r_esp -= arg_count*4;
+	int r_esp = c->reg[esp];
+	r_esp += arg_count*4;
 	
-	cpu->reg[esp] = r_esp;
+	//printf("adjusting stack by %d prev=%x new=%x\n", arg_count*4, c->reg[esp], r_esp  );
+	emu_cpu_reg32_set(c, esp, r_esp);
 
 	if(log_sarg == -1){
 		printf("%x\t%s()\n", eip_save, func );
@@ -2360,7 +2379,7 @@ int32_t	new_user_hook_GetTempFileNameA(struct emu_env *env, struct emu_env_hook 
 	}
 
     if(unique==0) unique = 0xBAAD;
-	asprintf(&s_unique, "%X", unique);
+	if(asprintf(&s_unique, "%X", unique) == -1) return -1;
 
 	uint32_t slen = path_len + prefix_len + strlen(s_unique) + 15;
 
@@ -2373,7 +2392,7 @@ int32_t	new_user_hook_GetTempFileNameA(struct emu_env *env, struct emu_env_hook 
 		emu_memory_write_block(mem, out_buf, s_out, strlen(s_out));
 	}
 	
-	printf("%x\tGetFileFilePath(path=%s, prefix=%x (%s), unique=%x, buf=%x) = %X\n", eip_save, 
+	printf("%x\tGetTempFileNameA(path=%s, prefix=%x (%s), unique=%x, buf=%x) = %X\n", eip_save, 
 			 s_path, s2, s_prefix, org_unique, out_buf, ret);
 
 	if(ret!=0) printf("\t Path = %s\n", s_out);
@@ -2388,6 +2407,117 @@ int32_t	new_user_hook_GetTempFileNameA(struct emu_env *env, struct emu_env_hook 
 	return 0;
 }
 
+int32_t	new_user_hook_LoadLibrary(struct emu_env *env, struct emu_env_hook *hook)
+{
 
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+    struct emu_string *dllstr = emu_string_new();
+
+	char* func = hook->hook.win->fnname;
+
+	int i=0;
+	int found_dll = 0;
+	uint32_t eip_save;
+	uint32_t dllname_ptr;
+	uint32_t dummy;
+
+/* 
+   LoadLibraryA(LPCTSTR lpFileName); 
+   LoadLibraryExA(LPCTSTR lpFileName, hFile, flags)
+*/
+
+	POP_DWORD(c, &eip_save);
+    POP_DWORD(c, &dllname_ptr);
+    	
+	if(strcmp(func, "LoadLibraryExA") ==0 ){
+		POP_DWORD(c, &dummy);
+		POP_DWORD(c, &dummy);
+	}
+
+    emu_memory_read_string(mem, dllname_ptr, dllstr, 256);
+	char *dllname = emu_string_char(dllstr);
+
+	for (i=0; env->env.win->loaded_dlls[i] != NULL; i++)
+	{
+		if (strncasecmp(env->env.win->loaded_dlls[i]->dllname, dllname, strlen(env->env.win->loaded_dlls[i]->dllname)) == 0)
+		{
+			emu_cpu_reg32_set(c, eax, env->env.win->loaded_dlls[i]->baseaddr);
+			found_dll = 1;
+			break;
+		}
+	}
+	
+	if (found_dll == 0)
+	{
+        if (emu_env_w32_load_dll(env->env.win, dllname) == 0)
+        {
+            emu_cpu_reg32_set(c, eax, env->env.win->loaded_dlls[i]->baseaddr);
+			found_dll = 1;
+        }
+        else
+        {
+            emu_cpu_reg32_set(c, eax, 0x0);
+        }
+	}
+
+	printf("%x\t%s(%s)\n",eip_save, func, dllname);
+	if(found_dll == 0) printf("\tNot found\n");
+
+	emu_string_free(dllstr);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_GetModuleFileNameA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	DWORD WINAPI GetModuleFileName(
+	  __in_opt  HMODULE hModule,
+	  __out     LPTSTR lpFilename,
+	  __in      DWORD nSize
+	);
+*/
+	uint32_t hmod;
+	POP_DWORD(c, &hmod);
+
+	uint32_t lpfname;
+	POP_DWORD(c, &lpfname);
+
+	uint32_t nsize;
+	POP_DWORD(c, &nsize);
+
+	int i=0;
+	char ret[255]={0} ;
+
+	if(hmod==0){
+		strcpy(ret,"c:\\Program Files\\scdbg\\parentApp.exe");
+	}else{
+		for (i=0; env->env.win->loaded_dlls[i] != NULL; i++){
+			if (env->env.win->loaded_dlls[i]->baseaddr == hmod){
+				sprintf(ret, "c:\\Windows\\System32\\%s", env->env.win->loaded_dlls[i]->dllname);
+				break;
+			}
+		}
+	}
+
+	i = strlen(ret);
+
+	printf("%x\tGetModuleFilenameA(hmod=%x, buf=%x, sz=%x) = %s\n",eip_save, hmod, lpfname, nsize, ret);
+
+	if(i > 0 && i < nsize){
+		emu_memory_write_block(mem, lpfname, &ret, i);
+	} 
+
+	emu_cpu_reg32_set(c, eax, i);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
 
 

@@ -89,4 +89,5 @@ int32_t	new_user_hook_strstr(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_strtoul(struct emu_env *env, struct emu_env_hook *hook);
 
 int32_t	new_user_hook_GetTempFileNameA(struct emu_env *env, struct emu_env_hook *hook);
-
+int32_t	new_user_hook_LoadLibrary(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_GetModuleFileNameA(struct emu_env *env, struct emu_env_hook *hook);
