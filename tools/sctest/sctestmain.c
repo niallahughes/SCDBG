@@ -29,6 +29,12 @@
     (switched reg[esp] mods in userhooks.c to be += instead of -= whoops) 3.15.11
 
 	TODO: 
+		  would be nice at the end of even a normal run to be able to show basic messages like
+				- Shellcode was packed in memory
+				- Shellcode Detects Api Hooks
+				- Shellcode Patches WinApi
+				- Which Initlization List it uses
+
 	      it would be nice to be able to load arbitrary dlls on cmdline would need:
 		      pe parsing to load and parse dll format 
 			  either need to call some export before emu_env_w32_new, or cache last peb pointers
@@ -164,6 +170,13 @@ bool in_repeat = false;
 int mdll_last_read_eip=0;
 int mdll_last_read_addr=0;
 
+//overview stats variables
+bool ov_reads_dll_mem = false;
+bool ov_writes_dll_mem = false;
+bool ov_ininit_list = false;
+bool ov_inmem_list = false;
+bool ov_inload_list = false;
+
 extern uint32_t next_alloc;
 
 char *regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
@@ -259,6 +272,12 @@ void mm_hook(uint32_t address){ //memory monitor callback function
 
 	if(disable_mm_logging) return;
 
+	if(address == 0x251ea0+0xC)  ov_inload_list = true;
+	if(address == 0x251ea0+0x14) ov_inmem_list  = true;
+	if(address == 0x251ea0+0x1C) ov_ininit_list = true;
+
+	if( !opts.mem_monitor ) return;
+
 	while(mm_points[i].address != 0){
 		if(address == mm_points[i].address){
 			mm_points[i].hitat = last_good_eip ; //we dont want a long long list, just last one probably only from one spot anyway..
@@ -287,6 +306,9 @@ void mm_range_callback(char id, char mode, uint32_t address){
 	if(cpu->eip == address) return;
 	if(last_good_eip == address) return;
     if(address < 0x1000) return;
+
+	if(mode == 'r') ov_reads_dll_mem = true;
+	if(mode == 'w') ov_writes_dll_mem = true;
 
 	if(mode=='r'){
 		mdll_last_read_eip  = last_good_eip;
@@ -472,6 +494,16 @@ int fulllookupAddress(int eip, char* buf255){
 	}
 
 	return 0;
+}
+
+bool was_packed(void){
+	unsigned char* tmp; int ii;
+	tmp = (unsigned char*)malloc(opts.size);
+	if(emu_memory_read_block(mem, CODE_OFFSET, tmp,  opts.size) == -1) return false;
+	for(ii=0;ii<opts.size;ii++){
+		if(opts.scode[ii] != tmp[ii]) break;
+	}
+	return ii < opts.size ? true : false;
 }
 
 void do_memdump(void){
@@ -1251,7 +1283,9 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "RtlDestroyEnvironment", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "RevertToSelf", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "RtlExitUserThread", new_user_hook_GenericStub, NULL);
-	
+	emu_env_w32_export_new_hook(env, "FlushViewOfFile", new_user_hook_GenericStub, NULL);
+    emu_env_w32_export_new_hook(env, "UnmapViewOfFile", new_user_hook_GenericStub, NULL);
+
 	//-----handled by the generic stub 2 string
 	emu_env_w32_export_new_hook(env, "InternetOpenA", new_user_hook_GenericStub2String, NULL);
 	emu_env_w32_export_new_hook(env, "InternetOpenUrlA", new_user_hook_GenericStub2String, NULL);
@@ -1828,13 +1862,24 @@ int run_sc(void)
 //			printf("\n");
 	} //---------------------- end of step loop
 
-	printf("\nstepcount %i\n",j);
-	
+	printf("\nStepcount %i\n",j);
+
 	if(opts.dump_mode && opts.file_mode){  // dump decoded buffer
 		do_memdump();
+	}else{
+		if( was_packed() ) printf("Sample decodes itself in memory. (use -d to dump)\n");
 	}
     
-	if(opts.mem_monitor){
+	if(!opts.mem_monitor_dlls ){
+		if( ov_reads_dll_mem ) printf("Reads of Dll memory detected (use -mdll for details)\n");
+		if( ov_writes_dll_mem) printf("Writes to Dll memory detected (use -mdll for details)\n");
+	}
+
+	if(!opts.mem_monitor){
+		if( ov_ininit_list ) printf("Uses peb.InInitilizationOrder List");
+		if( ov_inmem_list  ) printf("Uses peb.InMemoryOrder List");
+		if( ov_inload_list ) printf("Uses peb.InLoadOrder List");
+	}else{
 		printf("\nMemory Monitor Log:\n");
 
 		i=0;
@@ -1870,6 +1915,8 @@ int run_sc(void)
 		graph_draw(graph);
 	}
 
+	nl();
+	nl();
 	emu_env_free(env);
 	return 0;
 }
@@ -1909,8 +1956,8 @@ void print_help(void)
 	struct help_info help_infos[] =
 	{
 		{"foff", "hexnum" ,"starts execution at file offset"},
-		{"mm", NULL,       "enables Memory Monitor to log access to key addresses."},
-		{"mdll", NULL,     "uses Memory Monitor to log direct access to dll memory (detect hooks)"},
+		{"mm", NULL,       "enabled Memory Monitor (logs access to key addresses)"},
+		{"mdll", NULL,     "Monitor Dll - log direct access to dll memory (hook detection/patches)"},
 		{"nc", NULL,       "no color (if using sending output to other apps)"},
 		{"S", "< file.sc", "read shellcode/buffer from stdin"},
 		{"f", "fpath"    , "load shellcode from file specified."},
@@ -1925,13 +1972,13 @@ void print_help(void)
 		{"bp", "hexnum"  , "set breakpoint on addr or api name (same as -laa <hexaddr> -vvv)"},
 		{"bs", "int"     , "break on step (shortcut for -las <int> -vvv)"},
 		{"a",  NULL		 , "adjust offsets to file offsets not virtual"},
-		{"d",  NULL	     , "dump unpacked shellcode if changed (requires /f)"},
+		{"d",  NULL	     , "dump unpacked shellcode (requires /f)"},
 		{"las", "int"	 , "log at step ex. -las 100"},
 		{"laa", "hexnum" , "log at address or api ex. -laa 0x401020 or -laa ReadFile"},
-		{"s", "int"	     , "max number of steps to run (def=1000000, -1 unlimited)"},
+		{"s", "int"	     , "max number of steps to run (def=2000000, -1 unlimited)"},
 		{"hex", NULL,      "show hex dumps for hook reads/writes"},
-		{"findsc", NULL ,  "Scans file for possible shellcode buffers (brute force)"},
-		{"getpc", NULL ,   "Scans file for possible shellcode buffers (libemu getpc mode)"},
+		{"findsc", NULL ,  "detect possible shellcode buffers (brute force)"},
+		{"getpc", NULL ,   "detect possible shellcode buffers (libemu getpc mode)"},
 		{"dump", NULL,     "view hexdump of the target file (can be used with /foff)"},
 		{"disasm", "int" , "Disasm int lines (can be used with /foff)"},
 		{"fopen", "file" , "Opens a handle to <file> for use with GetFileSize() scanners"},
@@ -2017,7 +2064,7 @@ void parse_opts(int argc, char* argv[] ){
 	opts.verbosity_onerr = 0;
 	opts.verbosity_after =0;
 	opts.offset = 0;
-	opts.steps = 1000000;
+	opts.steps = 2000000;
 	opts.file_mode = false;
 	opts.dump_mode = false;
 	opts.getpc_mode = false;
@@ -2326,16 +2373,17 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	if(opts.mem_monitor){
-		printf("Memory monitor enabled..\n");
+	//mem_monitor always started now for overview mode.. mm still shows more specifics in logging level
+	if(opts.mem_monitor)/*{*/ 
+		printf("Memory monitor enabled..\n"); 
 		emu_memory_set_access_monitor((uint32_t)mm_hook);
 		i=0;
 		while(mm_points[i].address != 0){
 			emu_memory_add_monitor_point(mm_points[i++].address);
 		}
-	}
+	//}
 
-	if(opts.mem_monitor_dlls || opts.mem_monitor){ //-mdll does full logging
+	//if(opts.mem_monitor_dlls || opts.mem_monitor){ //-mdll does full logging
 		if(opts.mem_monitor_dlls) printf("Memory monitor for dlls enabled..\n");
 		emu_memory_set_range_access_monitor((uint32_t)mm_range_callback);
 		i=0;
@@ -2343,7 +2391,7 @@ int main(int argc, char *argv[])
 			emu_memory_add_monitor_range(mm_ranges[i].id, mm_ranges[i].start_at, mm_ranges[i].end_at);
 			i++;
 		}
-	}
+	//}
 
 	if(opts.offset > 0){
 		printf("Execution starts at file offset %x Opcodes: ", opts.offset);

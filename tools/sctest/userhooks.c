@@ -1463,10 +1463,14 @@ HINSTANCE ShellExecute(
 	struct emu_string *s_text = emu_string_new();
 	emu_memory_read_string(mem, p_file, s_text, 254);
 
+	struct emu_string *s_param = emu_string_new();
+	emu_memory_read_string(mem, lpParameters, s_param, 254);
+
 	char *stext = emu_string_char(s_text);
-	printf("%x\tShellExecuteA(%s)\n",eip_save,  stext );
+	printf("%x\tShellExecuteA(%s, %s)\n",eip_save,  stext, emu_string_char(s_param) );
 	
 	emu_string_free(s_text);
+	emu_string_free(s_param);
 
 	emu_cpu_reg32_set(c, eax, 33);
 	emu_cpu_eip_set(c, eip_save);
@@ -1560,6 +1564,13 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	  __out  LPSYSTEMTIME lpSystemTime
 	);
 
+	BOOL WINAPI FlushViewOfFile(
+	  __in  LPCVOID lpBaseAddress,
+	  __in  SIZE_T dwNumberOfBytesToFlush
+	);
+
+  BOOL WINAPI UnmapViewOfFile(  __in  LPCVOID lpBaseAddress );
+
 
 );
 
@@ -1586,6 +1597,18 @@ int32_t	new_user_hook_GenericStub(struct emu_env *env, struct emu_env_hook *hook
 	if(strcmp(func, "RtlDestroyEnvironment") ==0 ){
 		arg_count = 1;
 	}
+
+	if(strcmp(func, "FlushViewOfFile") ==0 ){
+		arg_count = 2;
+		log_val = get_ret(env,0);  //base address
+		log_val2 = get_ret(env,4);  //size
+	}
+
+	if(strcmp(func, "UnmapViewOfFile") ==0 ){
+		arg_count = 1;
+		log_val = get_ret(env,0);  //base address
+	}
+	
 
 	if(strcmp(func, "GetSystemTime") ==0 ){
 		arg_count = 0;

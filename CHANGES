@@ -1,7 +1,8 @@
 		Changelog for libemu
 
-3.xx.11
-    exe - added hooks: RevertToSelf, RtlExitUserThread
+3.27.11
+    exe - added hooks: RevertToSelf, RtlExitUserThread, FlushViewOfFile, UnmapViewOfFile
+	      -mm mode now enabled by default, added some overview stats at end of run (ispacked,hookdetect,patchapi)
 
 3.18.11 
     dll - added support for advapi32, shdocvw, 
