@@ -29,12 +29,6 @@
     (switched reg[esp] mods in userhooks.c to be += instead of -= whoops) 3.15.11
 
 	TODO: 
-		  would be nice at the end of even a normal run to be able to show basic messages like
-				- Shellcode was packed in memory
-				- Shellcode Detects Api Hooks
-				- Shellcode Patches WinApi
-				- Which Initlization List it uses
-
 	      it would be nice to be able to load arbitrary dlls on cmdline would need:
 		      pe parsing to load and parse dll format 
 			  either need to call some export before emu_env_w32_new, or cache last peb pointers

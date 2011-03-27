@@ -1438,7 +1438,7 @@ HINSTANCE ShellExecute(
   __in      LPCTSTR lpFile,
   __in_opt  LPCTSTR lpParameters,
   __in_opt  LPCTSTR lpDirectory,
-  __in      INT nShowCmd
+  __in      INT   nShowCmd
 );
 
 */
