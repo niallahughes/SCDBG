@@ -696,10 +696,10 @@ DWORD WINAPI GetTempPath(
 	uint32_t p_buffer;
 	POP_DWORD(c, &p_buffer);
 
-	static char *path = "c:\\tmp\\";
+	static char *path = "c:\\%TEMP%\\";
 
-	emu_memory_write_block(emu_memory_get(env->emu), p_buffer, path, 8);
-	emu_cpu_reg32_set(c, eax, 7);
+	emu_memory_write_block(emu_memory_get(env->emu), p_buffer, path, strlen(path));
+	emu_cpu_reg32_set(c, eax, strlen(path));
 
 	//dzzie - really the user hooks can just grab the args from esp-x
 	if ( hook->hook.win->userhook != NULL )
@@ -1297,6 +1297,12 @@ BOOL WriteFile(
 
 	uint32_t bytestowrite;
 	POP_DWORD(c,  &bytestowrite);
+
+	uint32_t max_size = 0x900000;
+	if( bytestowrite > max_size ){  //sample 2c2167d371c6e0ccbcee778a4d10b3bd - dzzie 
+		printf("\tWriteFile modifying BytesToWrite from %x to %x\n", bytestowrite , max_size);
+		bytestowrite = max_size;
+	}
 
 	unsigned char *buffer = malloc(bytestowrite);
 	emu_memory_read_block(emu_memory_get(env->emu), p_buffer, buffer, bytestowrite);

@@ -313,9 +313,9 @@ uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook,
 		//printf("adjusting to use ebp..\n");
 		emu_memory_read_string(mem, cpu->reg[ebp] , cmd, 255);
 		pszCmdLine = (char*)cmd->data; 
-		printf("%x\tCreateProcessA( %s ) (ebp)\n",retaddr, pszCmdLine); 
+		printf("%x\tCreateProcessA( %s ) = 0x1269 (ebp)\n",retaddr, pszCmdLine); 
 	}else{
-		printf("%x\tCreateProcessA( %s, %s )\n",retaddr, pszCmdLine, pszImageName );
+		printf("%x\tCreateProcessA( %s, %s ) = 0x1269\n",retaddr, pszCmdLine, pszImageName );
 	}
 
 	if(opts.interactive_hooks == 0) return 1;
@@ -658,7 +658,7 @@ uint32_t user_hook_recv(struct emu_env *env, struct emu_env_hook *hook, ...)
 	
 	if(opts.show_hexdumps && ret_val > 0){
 		printf("%d bytes received:\n", ret_val);
-		hexdump(buf, ret_val);
+		hexdump((unsigned char*)buf, ret_val);
 	}
 
 	return ret_val; //if we return > 0 dll will write it to mem at real emu addr for us..
@@ -684,7 +684,7 @@ uint32_t user_hook_send(struct emu_env *env, struct emu_env_hook *hook, ...)
 	printf("%x\tsend(h=%x, buf=%x, len=%x)\n",retaddr, s, (int)buf, len);
 
 	if(opts.show_hexdumps && len > 0 && buf > 0){
-		hexdump(buf,len);
+		hexdump((unsigned char*)buf,len);
 	}
 
 	if(opts.interactive_hooks == 0 ) return len; //success
@@ -1059,7 +1059,7 @@ LONG _lwrite(
 
 	printf("%x\t_lwrite(h=%x, buf=%x)\n",retaddr, hFile, real_buf);
 
-	if(opts.show_hexdumps && lpBuffer != 0 && cbWrite > 0) hexdump((char*)lpBuffer, cbWrite);
+	if(opts.show_hexdumps && lpBuffer != 0 && cbWrite > 0) hexdump((unsigned char*)lpBuffer, cbWrite);
 
 	if(opts.interactive_hooks == 0 ) return cbWrite;
 
@@ -1262,14 +1262,16 @@ uint32_t user_hook_GetTempPath(struct emu_env *env, struct emu_env_hook *hook, .
 	//printf("%s:%i %s\n",__FILE__,__LINE__,__FUNCTION__);
 
 	uint32_t retaddr = get_ret(env,-12);
+	uint32_t buflen = get_ret(env,-8);
+	uint32_t buf = get_ret(env,-4);
 
-/*
-DWORD WINAPI GetTempPath(
-  __in   DWORD nBufferLength,
-  __out  LPTSTR lpBuffer
-);
-*/
-	printf("%x\tGetTempPath()\n",retaddr);
+	/*
+	DWORD WINAPI GetTempPath(
+	  __in   DWORD nBufferLength,
+	  __out  LPTSTR lpBuffer
+	);
+	*/
+	printf("%x\tGetTempPath(len=%x, buf=%x)\n",retaddr, buflen, buf);
 
 	return 0;
 }
@@ -2239,7 +2241,7 @@ int32_t	new_user_hook_ReadFile(struct emu_env *env, struct emu_env_hook *hook)
 //scans for first null in emu memory from address. returns emu address of null or limit
 uint32_t emu_string_length(uint32_t addr, int scan_limit){
 	uint32_t o = addr;
-	char b;
+	unsigned char b;
 
 	emu_memory_read_byte(mem, o, &b);
 	while(b != 0){
@@ -2542,5 +2544,356 @@ int32_t	new_user_hook_GetModuleFileNameA(struct emu_env *env, struct emu_env_hoo
 	emu_cpu_eip_set(c, eip_save);
 	return 0;
 }
+
+int32_t	new_user_hook_DialogBoxIndirectParamA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	INT_PTR WINAPI DialogBoxIndirectParam(
+	  __in_opt  HINSTANCE hInstance,
+	  __in      LPCDLGTEMPLATE hDialogTemplate,
+	  __in_opt  HWND hWndParent,
+	  __in_opt  DLGPROC lpDialogFunc,
+	  __in      LPARAM dwInitParam
+	);
+*/
+	uint32_t hmod;
+	POP_DWORD(c, &hmod);
+
+	uint32_t hdlg;
+	POP_DWORD(c, &hdlg);
+
+	uint32_t hwnd;
+	POP_DWORD(c, &hwnd);
+
+	uint32_t lpproc;
+	POP_DWORD(c, &lpproc);
+
+	uint32_t param;
+	POP_DWORD(c, &param);
+
+	printf("%x\tDialogBoxIndirectParamA(hmod=%x, hdlg=%x, hwnd=%x, proc=%x, param=%x)\n",
+		eip_save, hmod, hdlg, hwnd, lpproc, param);
+
+	emu_cpu_reg32_set(c, eax, 1);
+
+	if( lpproc != 0 ){
+		PUSH_DWORD(c, param);
+		PUSH_DWORD(c, eip_save);
+		emu_cpu_eip_set(c, lpproc);
+		printf("\tTransferring execution to DialogProc...\n");
+	}else{
+		emu_cpu_eip_set(c, eip_save);
+	}
+
+	return 0;
+}
+
+int32_t	new_user_hook_ZwQueryVirtualMemory(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	NTSYSAPI NTSTATUS NTAPI	ZwQueryVirtualMemory(
+		IN HANDLE ProcessHandle,
+		IN PVOID BaseAddress,
+		IN MEMORY_INFORMATION_CLASS MemoryInformationClass,
+		OUT PVOID MemoryInformation,
+		IN ULONG MemoryInformationLength,
+		OUT PULONG ReturnLength OPTIONAL
+	);
+
+	typedef struct _MEMORY_BASIC_INFORMATION {
+	  PVOID  BaseAddress;
+	  PVOID  AllocationBase;
+	  ULONG  AllocationProtect;
+	  ULONG  RegionSize;
+	  ULONG  State;
+	  ULONG  Protect;
+	  ULONG  Type;
+	} MEMORY_BASIC_INFORMATION;
+
+    http://doxygen.reactos.org/d8/d6b/ndk_2mmfuncs_8h_a408860f675a0b9f1c8f3e84312291a0e.html#a408860f675a0b9f1c8f3e84312291a0e
+	http://undocumented.ntinternals.net/UserMode/Undocumented%20Functions/Memory%20Management/Virtual%20Memory/NtQueryVirtualMemory.html
+	http://forum.sysinternals.com/changing-page-permissions_topic6101_page2.html
+
+    MEMORY_INFORMATION_CLASS Enumerator:  http://doxygen.reactos.org/d9/da5/ndk_2mmtypes_8h_a6c7d439c9a9d33ae4a117d7bfd9ae2d6.html#a6c7d439c9a9d33ae4a117d7bfd9ae2d6
+		MemoryBasicInformation   
+		MemoryWorkingSetList   
+		MemorySectionName          //get file name from memorymapped file (using only fhandle) ? unicode result?
+		MemoryBasicVlmInformation   
+		 
+
+*/
+
+	char* mic[5] = {"BasicInfo", "WorkSet", "SectName", "BasicVlm", "Unknown"}; 
+	
+	uint32_t hproc;
+	POP_DWORD(c, &hproc);
+
+	uint32_t base;
+	POP_DWORD(c, &base);
+
+	uint32_t mem_info_class;
+	POP_DWORD(c, &mem_info_class);
+
+	uint32_t mem_info;
+	POP_DWORD(c, &mem_info);
+
+	uint32_t mem_info_len;
+	POP_DWORD(c, &mem_info_len);
+
+	uint32_t ret_len;
+	POP_DWORD(c, &ret_len);
+	
+	uint32_t safe_mic = mem_info_class;
+	if( mem_info_class > 3 ) safe_mic = 4;
+			
+	//TODO: copy the proper info to *meminfo based on class requested and fill out rlen if not null.
+	//      honestly though how often are we going to see this...not gonna bust a nut for undocumented rarely used api..
+	printf("%x\tZwQueryVirtualMemory(pid=%x, base=%x, cls=%x (%s), buf=%x, sz=%x, *retval=%x)\n",
+		eip_save, hproc, base, mem_info_class, mic[safe_mic], mem_info, mem_info_len, ret_len);
+
+	/*if(mem_info_class == 2){ //sectname
+		//char* sectname = "c:\\Program Files\\parent\\parentapp.exe";
+		unsigned char sectname[25] = {
+			0x63, 0x00, 0x3A, 0x00, 0x5C, 0x00, 0x70, 0x00, 0x61, 0x00, 0x72, 0x00, 0x65, 0x00, 0x6E, 0x00, 
+			0x74, 0x00, 0x2E, 0x00, 0x65, 0x00, 0x78, 0x00, 0x65
+		};
+		int sl = sizeof(sectname);
+		if(sl < mem_info_len){
+			emu_memory_write_block(mem, mem_info, sectname, sl);
+			if(ret_len != 0) emu_memory_write_dword(mem, ret_len, sl);
+		}else{
+			printf("\tBuffer not large enough to embed Section Name\n");
+		}
+	}*/
+
+	emu_cpu_reg32_set(c, eax, 1);	 
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_GetEnvironmentVariableA(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	DWORD WINAPI GetEnvironmentVariable(
+	  __in_opt   LPCTSTR lpName,
+	  __out_opt  LPTSTR lpBuffer,
+	  __in       DWORD nSize
+	);	
+*/
+	
+	uint32_t lpname;
+	POP_DWORD(c, &lpname);
+
+	uint32_t buf;
+	POP_DWORD(c, &buf);
+
+	uint32_t size;
+	POP_DWORD(c, &size);
+
+	struct emu_string *var_name = emu_string_new();
+	emu_memory_read_string(mem, lpname, var_name, 256);
+	char* var = (char*)var_name->data;
+	
+	char out[256]={0}; 
+
+	if(stricmp(var, "ProgramFiles") == 0 ) strcpy(out, "C:\\Program Files");
+	if(stricmp(var, "TEMP") == 0 )         strcpy(out, "C:\\Windows\\Temp");
+	if(stricmp(var, "TMP") == 0 )          strcpy(out, "C:\\Windows\\Temp");
+	if(stricmp(var, "WINDIR") == 0 )       strcpy(out, "C:\\Windows");
+
+	int sl = strlen(out);
+
+	if(sl < size) emu_memory_write_block(mem, buf, out, sl);
+		
+	printf("%x\tGetEnvironmentVariableA(name=%s, buf=%x, size=%x) = %s\n", eip_save, var, buf, size, out );
+
+	emu_cpu_reg32_set(c, eax, sl);	 
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_VirtualAllocEx(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	LPVOID WINAPI VirtualAllocEx(
+	  __in      HANDLE hProcess,
+	  __in_opt  LPVOID lpAddress,
+	  __in      SIZE_T dwSize,
+	  __in      DWORD flAllocationType,
+	  __in      DWORD flProtect
+);
+
+
+*/
+	uint32_t hproc;
+	POP_DWORD(c, &hproc);
+
+	uint32_t address;
+	POP_DWORD(c, &address);
+
+	uint32_t size;
+	POP_DWORD(c, &size);
+
+	uint32_t atype;
+	POP_DWORD(c, &atype);
+
+	uint32_t flProtect;
+	POP_DWORD(c, &flProtect);
+
+	uint32_t baseMemAddress = next_alloc;
+
+	if(size < MAX_ALLOC){
+		set_next_alloc(size);
+		printf("%x\tVirtualAllocEx(pid=%x, base=%x , sz=%x) = %x\n", eip_save, hproc, address, size, baseMemAddress);
+		if(size < 1024) size = 1024;
+		void *buf = malloc(size);
+		memset(buf,0,size);
+		emu_memory_write_block(mem,baseMemAddress,buf, size);
+		free(buf);
+	}else{
+		printf("%x\tVirtualAllocEx(pid=%x, sz=%x) (Ignored size out of range)\n", eip_save, hproc, size);
+	}
+
+	emu_cpu_reg32_set(c, eax, baseMemAddress);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+int32_t	new_user_hook_WriteProcessMemory(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	BOOL WINAPI WriteProcessMemory( //we assume its a process injection with base=VirtuaAllocEx so we embed there
+	  __in   HANDLE hProcess,
+	  __in   LPVOID lpBaseAddress,
+	  __in   LPCVOID lpBuffer,
+	  __in   SIZE_T nSize,
+	  __out  SIZE_T *lpNumberOfBytesWritten
+	);
+*/
+
+	uint32_t hproc;
+	POP_DWORD(c, &hproc);
+
+	uint32_t address;
+	POP_DWORD(c, &address);
+
+	uint32_t buf;
+	POP_DWORD(c, &buf);
+
+	uint32_t size;
+	POP_DWORD(c, &size);
+
+	uint32_t BytesWritten;
+	POP_DWORD(c, &BytesWritten);
+
+	printf("%x\tWriteProcessMemory(pid=%x, base=%x , buf=%x, sz=%x, written=%x)\n", eip_save, hproc, address, buf, size, BytesWritten);
+
+	if(size < MAX_ALLOC){
+		unsigned char* tmp = (unsigned char*)malloc(size);
+		emu_memory_read_block(mem, buf, tmp, size);
+		
+		if(opts.show_hexdumps){
+			int display_size = size;
+			if(display_size > 300){ 
+				printf("\tShowing first 300 bytes...\n");
+				display_size = 300;
+			}
+			hexdump(tmp, display_size);
+		}
+		 
+		emu_memory_write_block(mem, address, tmp, size);
+		if(BytesWritten != 0) emu_memory_write_dword(mem, BytesWritten, size);
+	}else{
+		printf("\tSize > MAX_ALLOC (%x) ignoring...", MAX_ALLOC);
+	}
+
+	emu_cpu_reg32_set(c, eax, 1);
+	emu_cpu_eip_set(c, eip_save);
+	return 0;
+}
+
+
+int32_t	new_user_hook_CreateRemoteThread(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	HANDLE WINAPI CreateRemoteThread(
+	  __in   HANDLE hProcess,
+	  __in   LPSECURITY_ATTRIBUTES lpThreadAttributes,
+	  __in   SIZE_T dwStackSize,
+	  __in   LPTHREAD_START_ROUTINE lpStartAddress,
+	  __in   LPVOID lpParameter,
+	  __in   DWORD dwCreationFlags,
+	  __out  LPDWORD lpThreadId
+	);
+*/
+
+	uint32_t hproc   = get_ret(env, 0);
+	uint32_t address = get_ret(env, 12);
+	uint32_t arg     = get_ret(env, 16);
+	uint32_t flags   = get_ret(env, 20);
+	uint32_t id      = get_ret(env, 24);
+
+	int r_esp = cpu->reg[esp];
+	r_esp += 7*4;
+	cpu->reg[esp] = r_esp;
+
+	printf("%x\tCreateRemoteThread(pid=%x, addr=%x , arg=%x, flags=%x, *id=%x)\n", eip_save, hproc, address, arg, flags, id);
+
+	if((flags == 0 || flags == 0x10000) ){ /* actually should check for bitflags */
+		PUSH_DWORD(c, arg);
+		PUSH_DWORD(c, eip_save);
+		emu_cpu_eip_set(c, address);
+		printf("\tTransferring execution to threadstart...\n");
+	}else{
+		emu_cpu_reg32_set(c, eax, 0x222);
+		emu_cpu_eip_set(c, eip_save);
+	}
+
+	return 0;
+}
+
+
 
 

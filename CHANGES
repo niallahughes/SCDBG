@@ -1,8 +1,15 @@
 		Changelog for libemu
 
+3.31.11
+    exe - added logging stub for ZwQueryVirtualMemory (not really implemented though)
+	    - added bunch of signed to unsigned casts to make gcc 4.x happy
+		- dbgshell dump words now lets you walk mem negative with -1/-2 options
+		- added hooks GetEnvironmentVariableA,VirtualAllocEx,WriteProcessMemory,CreateRemoteThread
+		- allocs and threads launched in "external" process are (successfully) run in process
+
 3.27.11
     exe - added hooks: RevertToSelf, RtlExitUserThread, FlushViewOfFile, UnmapViewOfFile
-	      -added some overview stats at end of run (ispacked,hookdetect,patchapi, peb list)
+	    - added some overview stats at end of run (ispacked,hookdetect,patchapi, peb list)
 
 3.18.11 
     dll - added support for advapi32, shdocvw, 

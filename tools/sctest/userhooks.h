@@ -91,3 +91,10 @@ int32_t	new_user_hook_strtoul(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_GetTempFileNameA(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_LoadLibrary(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_GetModuleFileNameA(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_DialogBoxIndirectParamA(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_ZwQueryVirtualMemory(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_GetEnvironmentVariableA(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_VirtualAllocEx(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_WriteProcessMemory(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_CreateRemoteThread(struct emu_env *env, struct emu_env_hook *hook);
+

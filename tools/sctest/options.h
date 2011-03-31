@@ -32,6 +32,7 @@ struct run_time_options
 	uint32_t step_over_bp;
 	FILE *fopen;
 	int	  adjust_getfsize;
+	bool  report;
 
 	struct 
 	{

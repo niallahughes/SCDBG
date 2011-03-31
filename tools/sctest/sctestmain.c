@@ -26,15 +26,20 @@
  *******************************************************************************/
 
 /*  this source has been modified from original see changelog 
-    (switched reg[esp] mods in userhooks.c to be += instead of -= whoops) 3.15.11
 
 	TODO: 
+		
+		  if you let a dll load on demand, you have to set the hooks as that dll loads?
+		  startup time is starting to suffer from all the dlls implemented..
+
+		  implement MultiByteToWideChar, CreateProcessInternalW
+		  implement guts of ZwQueryVirtualMemory hook if warrented (probably not lots of work)
+
 	      it would be nice to be able to load arbitrary dlls on cmdline would need:
 		      pe parsing to load and parse dll format 
 			  either need to call some export before emu_env_w32_new, or cache last peb pointers
 			  used, and load after the fact..maybe could eliminate all internal dlls then?
 
-		  display bug, on breakpoint and on error disasm shown twice
 		  add string deref for pointers in stack dump, deref regs and dword dump?
 		  opcode 2F could use supported 
 
@@ -151,6 +156,7 @@ int graph_draw(struct emu_graph *graph);
 void debugCPU(struct emu *e, bool showdisasm);
 int fulllookupAddress(int eip, char* buf255);
 void init_emu(void);
+void disasm_addr_simple(int);
 
 uint32_t FS_SEGMENT_DEFAULT_OFFSET = 0x7ffdf000;
 int CODE_OFFSET = 0x00401000;
@@ -170,6 +176,8 @@ bool ov_writes_dll_mem = false;
 bool ov_ininit_list = false;
 bool ov_inmem_list = false;
 bool ov_inload_list = false;
+bool ov_basedll_name = false;
+uint32_t ov_decode_self_addr[11] = {0,0,0,0,0,0,0,0,0,0,0};
 
 extern uint32_t next_alloc;
 
@@ -254,6 +262,7 @@ void ctrl_c_handler(int arg){
 
 void add_malloc(uint32_t base, uint32_t size){
 	if( malloc_cnt > 20 ) return;
+	emu_memory_add_monitor_range(0x66, base, base + size); //catch instructions which write to it
 	mallocs[malloc_cnt].base = base;
 	mallocs[malloc_cnt].size = size;
 	malloc_cnt++;
@@ -269,6 +278,7 @@ void mm_hook(uint32_t address){ //memory monitor callback function
 	if(address == 0x251ea0+0xC)  ov_inload_list = true;
 	if(address == 0x251ea0+0x14) ov_inmem_list  = true;
 	if(address == 0x251ea0+0x1C) ov_ininit_list = true;
+	if(address == 0x00253320)    ov_basedll_name = true;
 
 	if( !opts.mem_monitor ) return;
 
@@ -291,11 +301,32 @@ void mm_range_callback(char id, char mode, uint32_t address){
 	int i;
 	char buf[255]={0};
 	char *dll=0;
+	unsigned char b;
+	uint32_t v;
 
 	if(disable_mm_logging) return;
 
-	//some opcodes like cmp send us a read and write not sure why..but its annoying
+	//some opcodes send us a read and a write ignore these.. 
 	if(mdll_last_read_eip == last_good_eip && mdll_last_read_addr==address && mode =='w') return;
+
+	if(id == 0x66){ //modifying self in memory; catch all events with this ID
+		if(mode=='w'){
+			v = last_good_eip;// address;
+			//if( v > CODE_OFFSET + opts.size) v = previous_eip; 
+			emu_memory_read_byte(mem, v, &b);
+			if( b != 0xAB && b != 0x8B && b != 0 ){ /* ignore stosd and mov edi,edi, null mem ? */
+				for(i=0;i<10;i++){
+					if(ov_decode_self_addr[i] == v) break; //no duplicates
+					if(ov_decode_self_addr[i] == 0){
+						ov_decode_self_addr[i] = v;
+						break;
+					}
+				}
+			}
+			//("code changed! id=%x mode=%c addr=%x i=%d\n", id, mode, address, i);
+		}
+		return;
+	}
 
 	if(cpu->eip == address) return;
 	if(last_good_eip == address) return;
@@ -714,6 +745,14 @@ uint32_t get_instr_length(uint32_t va){
 	return emu_disasm_addr(cpu, va, disasm);  
 }
 
+void disasm_addr_simple(int va){
+	char disasm[200];
+	emu_disasm_addr(cpu, va, disasm);
+	start_color(mgreen);
+	printf("%x   %s\n", va, disasm);
+	end_color();
+}
+	
 int disasm_addr(struct emu *e, int va){  //arbitrary offset
 	
 	int instr_len =0;
@@ -781,7 +820,7 @@ void show_disasm(struct emu *e){  //current line
 
 unsigned int read_hex(char* prompt, char* buf){
 	unsigned int base = 0;
-	int nBytes = 20;
+	uint32_t nBytes = 20;
 	int i=0;
 
 	printf("%s: (hex/reg) 0x", prompt);
@@ -808,7 +847,7 @@ unsigned int read_hex(char* prompt, char* buf){
 }
 
 int read_string(char* prompt, char* buf){
-	int nBytes = 60;
+	uint32_t nBytes = 60;
 	int i=0;
 
 	printf("%s", prompt);
@@ -822,7 +861,7 @@ int read_string(char* prompt, char* buf){
 
 unsigned int read_int(char* prompt, char* buf){
 	unsigned int base = 0;
-	int nBytes = 20;
+	uint32_t nBytes = 20;
 	int i=0;
 
 	printf("%s: (int/reg) ", prompt);
@@ -938,7 +977,7 @@ void interactive_command(struct emu *e){
 	unsigned int base=0;
 	unsigned int size=0;
 	unsigned int i=0;
-	int bytes_read=0;
+	unsigned int bytes_read=0;
 	char x[2]; x[1]=0;
     char c=0;;
 
@@ -1088,7 +1127,7 @@ void interactive_command(struct emu *e){
 			if(emu_memory_read_block(mem, base, buf,  size) == -1){
 				printf("Memory read failed...\n");
 			}else{
-				real_hexdump(buf,size,base,false);
+				real_hexdump((unsigned char*)buf,size,base,false);
 			}
 			free(buf);
 
@@ -1097,18 +1136,35 @@ void interactive_command(struct emu *e){
 		if(c=='w'){
 			base = read_hex("Enter hex base to dump", tmp);
 			size = read_hex("Enter words to dump",tmp);
-			int rel = read_int("Show relative offset? (1/0)", tmp);			
+			int rel = read_int("Offset mode 1,2,-1,-2 (abs/rel/-abs/-rel)", tmp);			
+			if(rel==0) rel = 1;
 
-			for(i=0;i<size;i++){
-				if(emu_memory_read_dword(mem, base+(i*4), &bytes_read) == -1){
-					printf("Memory read of %x failed \n", base+(i*4) );
-					break;
-				}else{
-					fulllookupAddress(bytes_read,(char*)&lookup);
-					if(rel > 0){
-						printf("[x + %-2x]\t%08x\t%s\n", (i*4), bytes_read, lookup );
+			if( rel < 1 ){
+				for(i=base-size;i<=base;i+=4){
+					if(emu_memory_read_dword(mem, i, &bytes_read) == -1){
+						printf("Memory read of %x failed \n", base );
+						break;
 					}else{
-						printf("%08x\t%08x\t%s\n", base+(i*4), bytes_read, lookup);
+						fulllookupAddress(bytes_read,(char*)&lookup);
+						if(rel == -2){
+							printf("[x - %-2x]\t%08x\t%s\n", (base-i), bytes_read, lookup );
+						}else{
+							printf("%08x\t%08x\t%s\n", i, bytes_read, lookup);
+						}
+					}
+				}
+			}else{
+				for(i=0;i<=size;i+=4){
+					if(emu_memory_read_dword(mem, base+i, &bytes_read) == -1){
+						printf("Memory read of %x failed \n", base+i );
+						break;
+					}else{
+						fulllookupAddress(bytes_read,(char*)&lookup);
+						if(rel == 2){
+							printf("[x + %-2x]\t%08x\t%s\n", i, bytes_read, lookup );
+						}else{
+							printf("%08x\t%08x\t%s\n", base+i, bytes_read, lookup);
+						}
 					}
 				}
 			}
@@ -1185,6 +1241,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	   eip to return address at completion of your function. This mod allows for the development
 	   and testing of new hooks in applications without requiring further modifications to the
 	   dll itself. -dzzie
+	
 	*/
 
 	emu_env_w32_load_dll(env->env.win,"user32.dll");
@@ -1260,6 +1317,12 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "LoadLibraryExA", new_user_hook_LoadLibrary, NULL);
 	emu_env_w32_export_new_hook(env, "LoadLibraryA", new_user_hook_LoadLibrary, NULL);
 	emu_env_w32_export_new_hook(env, "GetModuleFileNameA", new_user_hook_GetModuleFileNameA, NULL);
+	emu_env_w32_export_new_hook(env, "DialogBoxIndirectParamA", new_user_hook_DialogBoxIndirectParamA, NULL);
+	emu_env_w32_export_new_hook(env, "ZwQueryVirtualMemory", new_user_hook_ZwQueryVirtualMemory, NULL);
+	emu_env_w32_export_new_hook(env, "GetEnvironmentVariableA", new_user_hook_GetEnvironmentVariableA, NULL);
+	emu_env_w32_export_new_hook(env, "VirtualAllocEx", new_user_hook_VirtualAllocEx, NULL);
+	emu_env_w32_export_new_hook(env, "WriteProcessMemory", new_user_hook_WriteProcessMemory, NULL);
+	emu_env_w32_export_new_hook(env, "CreateRemoteThread", new_user_hook_CreateRemoteThread, NULL);
 
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
@@ -1279,7 +1342,7 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "RtlExitUserThread", new_user_hook_GenericStub, NULL);
 	emu_env_w32_export_new_hook(env, "FlushViewOfFile", new_user_hook_GenericStub, NULL);
     emu_env_w32_export_new_hook(env, "UnmapViewOfFile", new_user_hook_GenericStub, NULL);
-
+	
 	//-----handled by the generic stub 2 string
 	emu_env_w32_export_new_hook(env, "InternetOpenA", new_user_hook_GenericStub2String, NULL);
 	emu_env_w32_export_new_hook(env, "InternetOpenUrlA", new_user_hook_GenericStub2String, NULL);
@@ -1576,7 +1639,10 @@ void init_emu(void){
     //.text:GetProcAddress+C BB FF FF 00 00                    mov     ebx, 0FFFFh
 	unsigned char gp[25] = {0x8B, 0xFF, 0x55, 0x8B, 0xEC, 0x51, 0x51, 0x53, 0x57, 0x8B, 0x7D, 0x0C, 0xBB, 0xFF, 0xFF, 0x00, 0x00, 0x3B, 0xFB, 0x0F, 0x86, 0xD1, 0xF2, 0xFF, 0xFF};
 	emu_memory_write_block(mem, 0x7c80ada0, gp, 25); 
-
+	
+	unsigned char tmp[0x1000]; //extra buffer on end in case they expect it..
+	memset(tmp, 0, sizeof(tmp));
+	emu_memory_write_block(mem, CODE_OFFSET + opts.size+1,tmp, sizeof(tmp));
 
 }
 
@@ -1860,20 +1926,9 @@ int run_sc(void)
 
 	if(opts.dump_mode && opts.file_mode){  // dump decoded buffer
 		do_memdump();
-	}else{
-		if( was_packed() ) printf("Sample decodes itself in memory. (use -d to dump)\n");
-	}
-    
-	if(!opts.mem_monitor_dlls ){
-		if( ov_reads_dll_mem ) printf("Reads of Dll memory detected (use -mdll for details)\n");
-		if( ov_writes_dll_mem) printf("Writes to Dll memory detected (use -mdll for details)\n");
 	}
 
-	if(!opts.mem_monitor){
-		if( ov_ininit_list ) printf("Uses peb.InInitilizationOrder List");
-		if( ov_inmem_list  ) printf("Uses peb.InMemoryOrder List");
-		if( ov_inload_list ) printf("Uses peb.InLoadOrder List");
-	}else{
+	if(opts.mem_monitor){
 		printf("\nMemory Monitor Log:\n");
 
 		i=0;
@@ -1902,6 +1957,26 @@ int run_sc(void)
 			}
 		}
 
+	}
+
+	if(opts.report){
+		printf("\nAnalysis report:\n-----------------------------------------\n");
+
+		if( was_packed() )     printf("Sample decodes itself in memory. (use -d to dump)\n");
+		if( ov_reads_dll_mem ) printf("Reads of Dll memory detected (use -mdll for details)\n");
+		if( ov_writes_dll_mem) printf("Writes to Dll memory detected (use -mdll for details)\n");
+		if( ov_ininit_list )   printf("Uses peb.InInitilizationOrder List\n");
+		if( ov_inmem_list  )   printf("Uses peb.InMemoryOrder List\n");
+		if( ov_inload_list )   printf("Uses peb.InLoadOrder List\n");
+		if( ov_basedll_name )  printf("Uses ldrData.BaseDllName\n");
+
+		if( ov_decode_self_addr[0] != 0 ){
+			printf("Instructions that write to code memory or allocs:\n");
+			for(i=0;i<10;i++){
+				if(ov_decode_self_addr[i] == 0) break;
+				disasm_addr_simple(ov_decode_self_addr[i]);
+			}
+		}
 	}
 
 	if ( opts.graphfile != NULL )
@@ -1978,6 +2053,7 @@ void print_help(void)
 		{"fopen", "file" , "Opens a handle to <file> for use with GetFileSize() scanners"},
 		{"- /+", NULL , "increments or decrements GetFileSize, can use multiple times"},
 		{"hooks", NULL , "dumps a list all implemented api hooks"},
+		{"r", NULL ,     "show analysis report at end of run"},
 	};
 
 	int i;
@@ -2066,6 +2142,7 @@ void parse_opts(int argc, char* argv[] ){
 	opts.no_color = false;
 	opts.exec_till_ret = false;
 	opts.mem_monitor_dlls = false;
+	opts.report = false;
 
 	for(i=1; i < argc; i++){
 					
@@ -2081,7 +2158,8 @@ void parse_opts(int argc, char* argv[] ){
 		if(strstr(buf,"/+") > 0 ) opts.adjust_getfsize++ ;
 		if(strstr(buf,"/a") > 0 ) opts.adjust_offsets = true ;
 		if(strstr(buf,"/i") > 0 ) opts.interactive_hooks = 1;
-		if(strstr(buf,"/v") > 0 ) opts.verbose++;	
+		if(strstr(buf,"/v") > 0 ) opts.verbose++;
+		if(sl==2 && strstr(buf,"/r") > 0 ) opts.report = true;
 		if(sl==3 && strstr(argv[i],"/nc") > 0 )   opts.no_color = true;
 		if(sl==4 && strstr(argv[i],"/hex") > 0 )  opts.show_hexdumps = true;
 		if(sl==7 && strstr(argv[i],"/findsc") > 0 ) opts.getpc_mode = true;
@@ -2255,7 +2333,7 @@ void loadsc(void){
 			exit(0);
 		}
 		opts.size = file_length(fp);
-		opts.scode = (unsigned char*)malloc(opts.size);
+		opts.scode = (unsigned char*)malloc(opts.size); 
 		fread(opts.scode, 1, opts.size, fp);
 		fclose(fp);
 		printf("Loaded %x bytes from file %s\n", opts.size, opts.sc_file);
@@ -2327,7 +2405,7 @@ int main(int argc, char *argv[])
 {
 	static struct termios oldt;
 	int i=0;
-
+		
 	disable_mm_logging = true;
 	memset(&emm, 0, sizeof(emm));
 	memset(&mallocs, 0 , sizeof(mallocs));
@@ -2346,6 +2424,31 @@ int main(int argc, char *argv[])
 	parse_opts(argc, argv);
 	loadsc();
 	init_emu(); //now full init with shellcode..sloppy yah but...	
+	
+	//---- mem_monitor init - always started now to generate reports.. mm & mdll still shows more specifics in log output
+	i=0;
+	if(opts.mem_monitor || opts.report ){
+		if(opts.mem_monitor) printf("Memory monitor enabled..\n"); 
+		emu_memory_set_access_monitor((uint32_t)mm_hook);
+		while(mm_points[i].address != 0){
+			emu_memory_add_monitor_point(mm_points[i++].address);
+		}
+	}
+
+	if(opts.mem_monitor || opts.report || opts.mem_monitor_dlls){
+ 		if(opts.mem_monitor_dlls) printf("Memory monitor for dlls enabled..\n");
+		emu_memory_set_range_access_monitor((uint32_t)mm_range_callback);
+		i=0;
+		while(mm_ranges[i].start_at != 0){
+			emu_memory_add_monitor_range(mm_ranges[i].id, mm_ranges[i].start_at, mm_ranges[i].end_at);
+			i++;
+		}
+	}
+	
+	if(opts.report){ //monitor writes to main code mem.
+		emu_memory_add_monitor_range(0x66, CODE_OFFSET, CODE_OFFSET + opts.size); 
+    }
+	//---- end memory monitor init 
 
 	printf("Initilization Complete..\n");
 
@@ -2367,26 +2470,7 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	//mem_monitor always started now for overview mode.. mm still shows more specifics in logging level
-	if(opts.mem_monitor)/*{*/ 
-		printf("Memory monitor enabled..\n"); 
-		emu_memory_set_access_monitor((uint32_t)mm_hook);
-		i=0;
-		while(mm_points[i].address != 0){
-			emu_memory_add_monitor_point(mm_points[i++].address);
-		}
-	//}
-
-	//if(opts.mem_monitor_dlls || opts.mem_monitor){ //-mdll does full logging
-		if(opts.mem_monitor_dlls) printf("Memory monitor for dlls enabled..\n");
-		emu_memory_set_range_access_monitor((uint32_t)mm_range_callback);
-		i=0;
-		while(mm_ranges[i].start_at != 0){
-			emu_memory_add_monitor_range(mm_ranges[i].id, mm_ranges[i].start_at, mm_ranges[i].end_at);
-			i++;
-		}
-	//}
-
+	
 	if(opts.offset > 0){
 		printf("Execution starts at file offset %x Opcodes: ", opts.offset);
 		real_hexdump(opts.scode + opts.offset, 10,-1,true);
