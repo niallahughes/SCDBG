@@ -879,6 +879,11 @@ LONG _lwrite(
 	uint32_t size;
 	POP_DWORD(c, &size);
 
+	uint32_t MAX_ALLOC = 0x900000;
+	if(size > MAX_ALLOC){
+		printf("\tAllocation > MAX_ALLOC adjusting...\n");
+		size = MAX_ALLOC; //dzzie
+	}
 
 	unsigned char *buffer = malloc(size);
 	emu_memory_read_block(emu_memory_get(env->emu), p_buffer, buffer, size);
@@ -1015,6 +1020,12 @@ void *malloc(
 	PUSH_DWORD(c, size);
 
 	logDebug(env->emu, "malloc %i bytes\n", size);
+
+	uint32_t MAX_ALLOC = 0x900000;
+	if(size > MAX_ALLOC){
+		printf("\tAllocation > MAX_ALLOC adjusting...\n");
+		size = MAX_ALLOC; //dzzie
+	}
 
 	uint32_t addr;
 	if (emu_memory_alloc(c->mem, &addr, size) == -1)

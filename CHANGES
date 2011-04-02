@@ -4,7 +4,7 @@
     exe - added logging stub for ZwQueryVirtualMemory (not really implemented though)
 	    - added bunch of signed to unsigned casts to make gcc 4.x happy
 		- dbgshell dump words now lets you walk mem negative with -1/-2 options
-		- added hooks GetEnvironmentVariableA,VirtualAllocEx,WriteProcessMemory,CreateRemoteThread
+		- added hooks GetEnvironmentVariableA,VirtualAllocEx,WriteProcessMemory,CreateRemoteThread,DialogBoxIndirectParamA
 		- allocs and threads launched in "external" process are (successfully) run in process
 
 3.27.11

@@ -371,7 +371,6 @@ int recv(
 	uint32_t xlen = len;
 	if (xlen < 0 || xlen > 4096)
 	{
-
 		printf("BUG\n");
 		xlen = 4096;
 	}
@@ -452,6 +451,12 @@ int send(
 	POP_DWORD(c, &flags);
 
 
+	uint32_t MAX_ALLOC = 0x900000;
+	if(len > MAX_ALLOC){
+		printf("\tAllocation > MAX_ALLOC adjusting...\n");
+		len = MAX_ALLOC; //dzzie
+	}
+
 	char *buffer = (char *)malloc(len);
 	logDebug(env->emu, "send(%i, 0x%08x, %i,  %i)\n", s, p_buf, len, flags);
 	emu_memory_read_block(emu_memory_get(env->emu), p_buf, buffer, len);
@@ -522,6 +527,12 @@ int sendto(
 	uint32_t len;
 	POP_DWORD(c, &len);
 
+	uint32_t MAX_ALLOC = 0x900000;
+	if(len > MAX_ALLOC){
+		printf("\tAllocation > MAX_ALLOC adjusting...\n");
+		len = MAX_ALLOC; //dzzie
+	}
+	
 	char *buffer = (char *)malloc(len);
 	emu_memory_read_block(emu_memory_get(env->emu), p_buf, buffer, len);
 

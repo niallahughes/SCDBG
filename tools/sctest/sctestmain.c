@@ -29,6 +29,8 @@
 
 	TODO: 
 		
+		  update the mdll ranges for new dlls
+
 		  if you let a dll load on demand, you have to set the hooks as that dll loads?
 		  startup time is starting to suffer from all the dlls implemented..
 
@@ -262,7 +264,7 @@ void ctrl_c_handler(int arg){
 
 void add_malloc(uint32_t base, uint32_t size){
 	if( malloc_cnt > 20 ) return;
-	emu_memory_add_monitor_range(0x66, base, base + size); //catch instructions which write to it
+	if(opts.report) emu_memory_add_monitor_range(0x66, base, base + size); //catch instructions which write to it
 	mallocs[malloc_cnt].base = base;
 	mallocs[malloc_cnt].size = size;
 	malloc_cnt++;
@@ -309,12 +311,15 @@ void mm_range_callback(char id, char mode, uint32_t address){
 	//some opcodes send us a read and a write ignore these.. 
 	if(mdll_last_read_eip == last_good_eip && mdll_last_read_addr==address && mode =='w') return;
 
-	if(id == 0x66){ //modifying self in memory; catch all events with this ID
+	if(cpu->eip == address) return;
+	if(last_good_eip == address) return;
+    if(address < 0x1000) return;
+
+	if(id == 0x66){ //modifying self in memory; catch all events with this ID - always return if this id
 		if(mode=='w'){
 			v = last_good_eip;// address;
-			//if( v > CODE_OFFSET + opts.size) v = previous_eip; 
 			emu_memory_read_byte(mem, v, &b);
-			if( b != 0xAB && b != 0x8B && b != 0 ){ /* ignore stosd and mov edi,edi, null mem ? */
+			if( b != 0x8B && b != 0 ){ /* why need to ignore mov edi,edi, null mem ? */
 				for(i=0;i<10;i++){
 					if(ov_decode_self_addr[i] == v) break; //no duplicates
 					if(ov_decode_self_addr[i] == 0){
@@ -327,10 +332,6 @@ void mm_range_callback(char id, char mode, uint32_t address){
 		}
 		return;
 	}
-
-	if(cpu->eip == address) return;
-	if(last_good_eip == address) return;
-    if(address < 0x1000) return;
 
 	if(mode == 'r') ov_reads_dll_mem = true;
 	if(mode == 'w') ov_writes_dll_mem = true;
@@ -1283,7 +1284,6 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_hook(env, "GetProcAddress", user_hook_GetProcAddress, NULL);
 	emu_env_w32_export_hook(env, "GetSystemDirectoryA", user_hook_GetSystemDirectoryA, NULL);
 	emu_env_w32_export_hook(env, "GetTickCount", user_hook_GetTickCount, NULL);
-	//emu_env_w32_export_hook(env, "LoadLibraryA", user_hook_LoadLibraryA, NULL);
 	emu_env_w32_export_hook(env, "_lcreat", user_hook__lcreat, na);
 	emu_env_w32_export_hook(env, "_lwrite", user_hook__lwrite, na);
 	emu_env_w32_export_hook(env, "_lclose", user_hook__lclose, na);
@@ -1583,21 +1583,6 @@ void init_emu(void){
 	int regs[] = {0,    0,      0,     0,  0x12fe00,0x12fff0  ,0,    0};
 	//            0      1      2      3      4      5         6      7    
 	//*regm[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
-	
-	//init our global pointers..
-	e = emu_new();
-	cpu = emu_cpu_get(e);
-	mem = emu_memory_get(e);
-	env = emu_env_new(e);
-
-	env->profile = emu_profile_new();
-
-	if ( env == 0 )
-	{
-		printf("%s \n", emu_strerror(e));
-		printf("%s \n", strerror(emu_errno(e)));
-		exit(-1);
-	}
 
 	for (i=0;i<8;i++) emu_cpu_reg32_set( emu_cpu_get(e), i , regs[i]);
 
@@ -1631,7 +1616,9 @@ void init_emu(void){
 	/**/
 
 	//some of the shellcodes look for hooks set on some API, lets add some mem so it exists to check
-    emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile	
+    emu_memory_write_dword(mem, 0x7df7b0bb, 0x00000000); //UrldownloadToFile
+	
+	//write shellcode to memory
 	emu_memory_write_block(mem, CODE_OFFSET, opts.scode,  opts.size);
 
 	//some shellcode locates GetProcAddress by the following signature
@@ -1928,6 +1915,27 @@ int run_sc(void)
 		do_memdump();
 	}
 
+	if(opts.report){
+		printf("\nAnalysis report:\n");
+
+		if( was_packed() )     printf("\tSample decodes itself in memory.   \t(use -d to dump)\n");
+		if( ov_reads_dll_mem ) printf("\tReads of Dll memory detected       \t(use -mdll for details)\n");
+		if( ov_writes_dll_mem) printf("\tWrites to Dll memory detected      \t(use -mdll for details)\n");
+		if( ov_ininit_list )   printf("\tUses peb.InInitilizationOrder List\n");
+		if( ov_inmem_list  )   printf("\tUses peb.InMemoryOrder List\n");
+		if( ov_inload_list )   printf("\tUses peb.InLoadOrder List\n");
+		if( ov_basedll_name )  printf("\tUses ldrData.BaseDllName\n");
+
+		if( ov_decode_self_addr[0] != 0 ){
+			printf("\tInstructions that write to code memory or allocs:\n");
+			for(i=0;i<10;i++){
+				if(ov_decode_self_addr[i] == 0) break;
+				printf("\t");
+				disasm_addr_simple(ov_decode_self_addr[i]);
+			}
+		}
+	}
+
 	if(opts.mem_monitor){
 		printf("\nMemory Monitor Log:\n");
 
@@ -1959,26 +1967,6 @@ int run_sc(void)
 
 	}
 
-	if(opts.report){
-		printf("\nAnalysis report:\n-----------------------------------------\n");
-
-		if( was_packed() )     printf("Sample decodes itself in memory. (use -d to dump)\n");
-		if( ov_reads_dll_mem ) printf("Reads of Dll memory detected (use -mdll for details)\n");
-		if( ov_writes_dll_mem) printf("Writes to Dll memory detected (use -mdll for details)\n");
-		if( ov_ininit_list )   printf("Uses peb.InInitilizationOrder List\n");
-		if( ov_inmem_list  )   printf("Uses peb.InMemoryOrder List\n");
-		if( ov_inload_list )   printf("Uses peb.InLoadOrder List\n");
-		if( ov_basedll_name )  printf("Uses ldrData.BaseDllName\n");
-
-		if( ov_decode_self_addr[0] != 0 ){
-			printf("Instructions that write to code memory or allocs:\n");
-			for(i=0;i<10;i++){
-				if(ov_decode_self_addr[i] == 0) break;
-				disasm_addr_simple(ov_decode_self_addr[i]);
-			}
-		}
-	}
-
 	if ( opts.graphfile != NULL )
 	{
 		graph_draw(graph);
@@ -1996,7 +1984,7 @@ int getpctest(void)
 	int offset=0;
 	
 	start_color(myellow);
-
+	
 	if ( (offset = emu_shellcode_test(e, (uint8_t *)opts.scode, opts.size)) >= 0 ){
 		printf("Shellcode detected at offset = 0x%04x\n", offset);
 		//printf("Would you like to start execution there? (y/n):");
@@ -2420,10 +2408,24 @@ int main(int argc, char *argv[])
     signal(SIGTERM,restore_terminal);
 	atexit(atexit_restore_terminal);
 	
-	init_emu(); //so env is loaded for sym lookup in parse_opts, no shellcode written yet..
+	//init_emu(); //so env is loaded for sym lookup in parse_opts, no shellcode written yet..
+
+	e = emu_new();
+	cpu = emu_cpu_get(e);
+	mem = emu_memory_get(e);
+	env = emu_env_new(e);
+
+	env->profile = emu_profile_new();
+
+	if ( env == 0 ){
+		printf("%s \n", emu_strerror(e));
+		printf("%s \n", strerror(emu_errno(e)));
+		exit(-1);
+	}
+
 	parse_opts(argc, argv);
 	loadsc();
-	init_emu(); //now full init with shellcode..sloppy yah but...	
+	init_emu();	
 	
 	//---- mem_monitor init - always started now to generate reports.. mm & mdll still shows more specifics in log output
 	i=0;

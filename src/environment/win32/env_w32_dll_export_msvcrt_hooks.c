@@ -225,8 +225,16 @@ size_t fwrite( const void *buffer, size_t size, size_t count, FILE *stream );
 	uint32_t count;
 	MEM_DWORD_READ(c, (c->reg[esp]+8), &count);
 	
-	unsigned char *buffer = malloc(size*count);
-	emu_memory_read_block(emu_memory_get(env->emu), p_buffer, buffer, size*count);
+	uint32_t len = size * count;
+
+	uint32_t MAX_ALLOC = 0x900000;
+	if(len > MAX_ALLOC){
+		printf("\tAllocation > MAX_ALLOC adjusting...\n");
+		len = MAX_ALLOC; //dzzie
+	}
+
+	unsigned char *buffer = malloc(len);
+	emu_memory_read_block(emu_memory_get(env->emu), p_buffer, buffer, len);
 
 	uint32_t p_stream;
 	MEM_DWORD_READ(c, c->reg[esp]+12, &p_stream);
@@ -242,7 +250,7 @@ size_t fwrite( const void *buffer, size_t size, size_t count, FILE *stream );
 											   p_stream);
 	}else
 	{
-		returnvalue	= size*count;
+		returnvalue	= len;
 	}
 
 
