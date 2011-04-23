@@ -27,14 +27,22 @@
 
 /*  this source has been modified from original see changelog 
 
+	I am not going to really impement Wchar api..if they call MultiByte2Wc, i am just returning
+	the ascii string, cause they are just going to send it to hooks latter on. So fake it and
+	use the A hooks for the W api. works out unless they were natively working in Wchar which
+	I have yet to see. its a dirty hack, but in practice (so far) its working just fine...
+
 	TODO: 
 		
+		  for hooks with lots of args, (and needed for debugging) use opts.verbose to
+		  select which to use (simple vrs debug)
+
+		  InMemoryOrderModuleList 2nd dll supposed to be k32 ? 
+
 		  update the mdll ranges for new dlls
 
 		  if you let a dll load on demand, you have to set the hooks as that dll loads?
-		  startup time is starting to suffer from all the dlls implemented..
 
-		  implement MultiByteToWideChar, CreateProcessInternalW
 		  implement guts of ZwQueryVirtualMemory hook if warrented (probably not lots of work)
 
 	      it would be nice to be able to load arbitrary dlls on cmdline would need:
@@ -143,13 +151,19 @@ struct result{
 	int org_i;
 };
 
+struct patch{
+		char memAddress[8];
+		uint32_t dataSize;
+		uint32_t dataOffset;
+};
+
 int malloc_cnt=0;
 struct m_allocs mallocs[21];
 
 struct emm_mode emm; //extended memory monitor
 struct run_time_options opts;
 static struct termios orgt;
-struct emu *e = 0;           //this is just easier...only one global object anyway
+struct emu *e = 0;           //one global object 
 struct emu_cpu *cpu = 0;
 struct emu_memory *mem = 0;
 struct emu_env *env = 0;
@@ -159,6 +173,7 @@ void debugCPU(struct emu *e, bool showdisasm);
 int fulllookupAddress(int eip, char* buf255);
 void init_emu(void);
 void disasm_addr_simple(int);
+void LoadPatch(char* fpath);
 
 uint32_t FS_SEGMENT_DEFAULT_OFFSET = 0x7ffdf000;
 int CODE_OFFSET = 0x00401000;
@@ -171,6 +186,8 @@ int exception_count=0;
 bool in_repeat = false;
 int mdll_last_read_eip=0;
 int mdll_last_read_addr=0;
+
+bool hexdump_color = false;
 
 //overview stats variables
 bool ov_reads_dll_mem = false;
@@ -678,6 +695,7 @@ void real_hexdump(unsigned char* str, int len, int offset, bool hexonly){
 	
 	char *nl="\n";
 	char *tmp = (char*)malloc(75);
+    bool color_on = false;
 
 	if(!hexonly) printf(nl);
 	
@@ -688,9 +706,15 @@ void real_hexdump(unsigned char* str, int len, int offset, bool hexonly){
 
 	for(i=0;i<len;i++){
 
+		color_on = false;
+		if(str[i] == 0x90 || str[i]== 0xE9 || str[i]== 0xE8) color_on = true;
+		if(color_on && hexdump_color) start_color(myellow);
+
 		sprintf(tmp, "%02x ", str[i]);
 		printf("%s",tmp);
 		
+		if(color_on && hexdump_color) end_color();
+
 		if( (int)str[i]>20 && (int)str[i] < 123 ) asc[aspot] = str[i];
 		 else asc[aspot] = 0x2e;
 
@@ -1323,6 +1347,11 @@ void set_hooks(struct emu_env *env,struct nanny *na){
 	emu_env_w32_export_new_hook(env, "VirtualAllocEx", new_user_hook_VirtualAllocEx, NULL);
 	emu_env_w32_export_new_hook(env, "WriteProcessMemory", new_user_hook_WriteProcessMemory, NULL);
 	emu_env_w32_export_new_hook(env, "CreateRemoteThread", new_user_hook_CreateRemoteThread, NULL);
+	emu_env_w32_export_new_hook(env, "MultiByteToWideChar", new_user_hook_MultiByteToWideChar, NULL);
+	emu_env_w32_export_new_hook(env, "URLDownloadToCacheFileW", new_user_hook_URLDownloadToCacheFileA, NULL);
+	emu_env_w32_export_new_hook(env, "CreateFileW", new_user_hook_CreateFileW, NULL);
+	emu_env_w32_export_new_hook(env, "CreateProcessInternalW", new_user_hook_CreateProcessInternalA, NULL);
+	
 
 	//-----handled by the generic stub
 	emu_env_w32_export_new_hook(env, "GetFileSize", new_user_hook_GenericStub, NULL);
@@ -1630,6 +1659,18 @@ void init_emu(void){
 	unsigned char tmp[0x1000]; //extra buffer on end in case they expect it..
 	memset(tmp, 0, sizeof(tmp));
 	emu_memory_write_block(mem, CODE_OFFSET + opts.size+1,tmp, sizeof(tmp));
+
+	/*InMemoryOrderModuleList 2nd entry lets swap the ntdll base for kernel32
+	//this breaks other shellcode though cause not complete...
+	if(opts.pebPatch){
+		emu_memory_write_dword(mem, 0x252f38 + 0x10, 0x7c800000); //k32 base (these dont change basedllname pointer tho)
+		emu_memory_write_dword(mem, 0x252ef0 + 0x10, 0x7C900000); //ntdll
+	}*/
+
+
+	
+	
+	
 
 }
 
@@ -2042,6 +2083,7 @@ void print_help(void)
 		{"- /+", NULL , "increments or decrements GetFileSize, can use multiple times"},
 		{"hooks", NULL , "dumps a list all implemented api hooks"},
 		{"r", NULL ,     "show analysis report at end of run"},
+		{"patch", "fpath","load patch file <fpath> for libemu memory"},
 	};
 
 	int i;
@@ -2147,7 +2189,7 @@ void parse_opts(int argc, char* argv[] ){
 		if(strstr(buf,"/a") > 0 ) opts.adjust_offsets = true ;
 		if(strstr(buf,"/i") > 0 ) opts.interactive_hooks = 1;
 		if(strstr(buf,"/v") > 0 ) opts.verbose++;
-		if(sl==2 && strstr(buf,"/r") > 0 ) opts.report = true;
+		if(sl==2 && strstr(buf,"/r") > 0 ){ opts.report = true; opts.mem_monitor = true;}
 		if(sl==3 && strstr(argv[i],"/nc") > 0 )   opts.no_color = true;
 		if(sl==4 && strstr(argv[i],"/hex") > 0 )  opts.show_hexdumps = true;
 		if(sl==7 && strstr(argv[i],"/findsc") > 0 ) opts.getpc_mode = true;
@@ -2162,6 +2204,14 @@ void parse_opts(int argc, char* argv[] ){
 		if(strstr(buf,"/d") > 0 ) opts.dump_mode = true;
 		if(sl==2 && strstr(buf,"/h") > 0 ) print_help();
 		if(strstr(buf,"/S") > 0 ) opts.from_stdin = true;
+
+		if(sl==6 && strstr(argv[i],"/patch") > 0 ){
+			if(i+1 >= argc){
+				printf("Invalid option /patch must specify a file path as next arg\n");
+				exit(0);
+			}
+			opts.patch_file = strdup(argv[i+1]);
+		}
 
 		if(sl==2 && strstr(buf,"/f") > 0 ){
 			if(i+1 >= argc){
@@ -2408,25 +2458,19 @@ int main(int argc, char *argv[])
     signal(SIGTERM,restore_terminal);
 	atexit(atexit_restore_terminal);
 	
-	//init_emu(); //so env is loaded for sym lookup in parse_opts, no shellcode written yet..
-
 	e = emu_new();
 	cpu = emu_cpu_get(e);
 	mem = emu_memory_get(e);
 	env = emu_env_new(e);
 
-	env->profile = emu_profile_new();
-
-	if ( env == 0 ){
-		printf("%s \n", emu_strerror(e));
-		printf("%s \n", strerror(emu_errno(e)));
-		exit(-1);
-	}
+	if ( env == 0 ){ printf("%s\n%s\n", emu_strerror(e), strerror(emu_errno(e))); exit(-1);}
 
 	parse_opts(argc, argv);
 	loadsc();
 	init_emu();	
 	
+	if(opts.patch_file != NULL) LoadPatch(opts.patch_file);
+
 	//---- mem_monitor init - always started now to generate reports.. mm & mdll still shows more specifics in log output
 	i=0;
 	if(opts.mem_monitor || opts.report ){
@@ -2457,6 +2501,7 @@ int main(int argc, char *argv[])
 	if(opts.adjust_getfsize != 0) printf("Adjusting GetFileSize by %d\n", opts.adjust_getfsize);
 	
 	if(opts.hexdump_file == 1){
+		hexdump_color = true; //highlights possible start addresses (90,E8,E9)
 		if(opts.offset >= opts.size ) opts.offset = 0;
 		if(opts.offset > 0) printf("Starting at offset %x\n", opts.offset);
 		real_hexdump(opts.scode+opts.offset, opts.size-opts.offset,0,false);
@@ -2557,29 +2602,62 @@ int main(int argc, char *argv[])
 
 
 
-/*  this block no longer necessary after dll PEB modifications 1-32-11
-		401016   64A130000000                    mov eax,fs:[0x30]  ;&(PEB)
-		40101c   8B400C                          mov eax,[eax+0xc]  ;PEB->Ldr
-		40101f   8B701C                          mov esi,[eax+0x1c] ;PEB->Ldr.InInitOrder 
-		401022   AD                              lodsd              ;PEB->Ldr.InInitOrder.flink (kernel32.dll)
-		401023   8B6820                          mov ebp,[eax+0x20]  InInitOrder[X].module_name (unicode)
-		401026   807D0C33                        cmp byte [ebp+0xc],0x33   
+
+void LoadPatch(char* fpath){
 	
-	unsigned char uni_k32[23] = {
-			0x6B, 0x00, 0x65, 0x00, 0x72, 0x00, 0x6E, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x33, 0x00, 0x32, 0x00, 
-			0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C
-	};
-	emu_memory_write_block(mem, 0x252020+0x40, uni_k32, 23 ); //embed the data
-	emu_memory_write_dword(mem, 0x252020+0x20, 0x252020+0x40); //embed the pointer
-	*/
+	long curpos=0;
+	int i = 0;
+	char *buf = 0;
+	char addr[12];
+	uint32_t memAddress=0;
+	struct patch p;
+	size_t r = sizeof(struct patch);
 
+	//patch file format is an array of patch structures at beginning 
+	//of file terminated by empty struct at end. field dataOffset points
+	//to the raw start file offset of the patch file for the data to load.
 
+	FILE *f = fopen(fpath, "rb");
+	if( f == 0 ){
+		printf("Failed to open patch file: %s\n", fpath);
+		return;
+	}
 
+	printf("Loading patch file %s\n", fpath);
 
+	r = fread(&p, 16,1,f);
 
+	while( p.dataOffset > 0 ){
+		curpos = ftell(f);
 
+		if( fseek(f, p.dataOffset, SEEK_SET) != 0 ){
+			printf("Patch: %d  - Error seeking data offset %x\n", i, p.dataOffset);
+			break;
+		}
 
+		buf = (char*)malloc(p.dataSize); 
+		r = fread(buf, 1, p.dataSize, f);
+		if( r != p.dataSize ){
+			printf("patch %d - failed to read full size %x readsz=%x\n", i, p.dataSize, r);
+			break;
+		}
 
+		memset(addr, 0, 12);
+		memcpy(addr, p.memAddress, 8); //no trailing null to keep each entry at 16 bytes
+		memAddress = strtol(addr, NULL, 16);	
+
+		emu_memory_write_block(mem, memAddress, buf, p.dataSize);
+		printf("Applied patch %d va=%x sz=%x\n", i, memAddress, p.dataSize); 
+		free(buf);
+
+		fseek(f, curpos, SEEK_SET);
+		r = fread(&p, sizeof(struct patch),1,f); //load next patch
+		i++;
+	}
+
+	fclose(f);
+
+}
 
 
 

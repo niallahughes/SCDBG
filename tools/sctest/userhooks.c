@@ -773,7 +773,7 @@ HANDLE CreateFile(
 	va_end(vl);
 
 	char *localfile;
-	printf("%x\tCreateFile(%s)\n",retaddr,lpFileName);
+	printf("%x\t%s(%s)\n",retaddr, hook->hook.win->fnname, lpFileName);
 	
 	uint32_t handle = get_fhandle();
 	if(opts.interactive_hooks == 0 ) return handle;
@@ -1765,10 +1765,10 @@ int32_t	new_user_hook_CreateProcessInternalA(struct emu_env *env, struct emu_env
 	if(p_cmdline !=0){
 		struct emu_string *s_text = emu_string_new();
 		emu_memory_read_string(mem, p_cmdline, s_text, 255);
-		printf("%x\tCreateProcessInternalA( %s )\n",eip_save,  emu_string_char(s_text) );
+		printf("%x\t%s( %s )\n",eip_save, hook->hook.win->fnname, emu_string_char(s_text) );
 		emu_string_free(s_text);
 	}else{
-		printf("%x\tCreateProcessInternalA()\n",eip_save);
+		printf("%x\t%s()\n",eip_save,hook->hook.win->fnname);
 	}
 
 	emu_cpu_reg32_set(c, eax, 0);
@@ -1895,8 +1895,12 @@ int32_t	new_user_hook_URLDownloadToCacheFileA(struct emu_env *env, struct emu_en
 	struct emu_string *s_url = emu_string_new();
 
 	emu_memory_read_string(mem, p_url, s_url, 255);
+	char* url = emu_string_char(s_url);
 
-	printf("%x\tURLDownloadToCacheFileA(%s, buf=%x)\n",eip_save,  emu_string_char(s_url), p_fname);
+	//unicode version now redirected here too..
+	//if(url[1] == 0) then its unicode we should use a tmp buf and extract.
+
+	printf("%x\t%s(%s, buf=%x)\n",eip_save, hook->hook.win->fnname , url, p_fname);
 
 	emu_string_free(s_url);
 
@@ -2894,6 +2898,141 @@ int32_t	new_user_hook_CreateRemoteThread(struct emu_env *env, struct emu_env_hoo
 	return 0;
 }
 
+
+int32_t	new_user_hook_MultiByteToWideChar(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+
+	uint32_t eip_save;
+
+	POP_DWORD(c, &eip_save);
+
+/*
+	Copyint MultiByteToWideChar(
+	  __in   UINT CodePage,
+	  __in   DWORD dwFlags,
+	  __in   LPCSTR lpMultiByteStr,
+	  __in   int cbMultiByte,
+	  __out  LPWSTR lpWideCharStr,
+	  __in   int cchWideChar
+	);
+
+*/
+
+	uint32_t cp      = get_ret(env, 0);
+	uint32_t flags   = get_ret(env, 4);
+	uint32_t src     = get_ret(env, 8);
+	uint32_t size    = get_ret(env, 12);
+	uint32_t dst     = get_ret(env, 16);
+	uint32_t dstsz   = get_ret(env, 20);
+
+	int r_esp = cpu->reg[esp];
+	r_esp += 6*4;
+	cpu->reg[esp] = r_esp;
+
+	struct emu_string *s_src = emu_string_new();
+	emu_memory_read_string(mem, src, s_src, 500);
+	char* s = (char*)s_src->data;
+
+	if(opts.verbose > 0){
+		printf("%x\tMultiByteToWideChar(cp=%x, fl=%x , src=%x, sz=%x, dst=%x, dstsz=%x)\n", eip_save, cp, flags, src, size, dst,dstsz);
+		printf("\t%x -> %s\n", src, s);
+	}else{
+		printf("%x\tMultiByteToWideChar(%s)\n", eip_save, s);
+	}
+
+	int retval = (strlen(s) * 2);
+
+	if(dst != 0 && dstsz!=0 && dstsz < MAX_ALLOC && dstsz >= retval){ 
+		//just write the ascii string to the unicode buf, they are probably just gonna 
+		//pass it back to our hook. work an experiment to see if it causes problems or not
+		emu_memory_write_block(mem, dst, s_src->data, strlen(s));
+	}
+
+	/*
+	  why make more work for myself?
+	  int i=0;
+	  if(dst != 0 && dstsz!=0 && dstsz < MAX_ALLOC && dstsz >= retval){ 
+		char* tmp = (char*)malloc(dstsz+100);
+		memset(tmp,0,dstsz+100);
+
+		for(i=0;i<strlen(s);i++){
+			if(i > dstsz){ retval = 0; break;}
+			tmp[i*2] = s[i];
+		}
+
+		emu_memory_write_block(mem, dst, tmp, retval);
+
+	}*/
+		
+	emu_cpu_reg32_set(c, eax, retval);
+	emu_cpu_eip_set(c, eip_save);
+	 
+	return 0;
+}
+
+int32_t	new_user_hook_CreateFileW(struct emu_env *env, struct emu_env_hook *hook)
+{
+
+	struct emu_cpu *c = emu_cpu_get(env->emu);
+	uint32_t eip_save;
+	POP_DWORD(c, &eip_save);
+
+/*
+HANDLE CreateFile(
+  LPCTSTR lpFileName,
+  DWORD dwDesiredAccess,
+  DWORD dwShareMode,
+  LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  DWORD dwCreationDisposition,
+  DWORD dwFlagsAndAttributes,
+  HANDLE hTemplateFile
+);
+*/
+
+	uint32_t p_filename;
+	POP_DWORD(c, &p_filename);
+    struct emu_string *filename = emu_string_new();
+	emu_memory_read_string(emu_memory_get(env->emu), p_filename, filename, 256);
+
+	uint32_t desiredaccess;
+	POP_DWORD(c, &desiredaccess);
+
+	uint32_t sharemode;
+	POP_DWORD(c, &sharemode);
+
+	uint32_t securityattr;
+	POP_DWORD(c, &securityattr);
+
+    uint32_t createdisp;
+	POP_DWORD(c, &createdisp);
+
+	uint32_t flagsandattr;
+	POP_DWORD(c, &flagsandattr);
+
+	uint32_t templatefile;
+	POP_DWORD(c, &templatefile);
+
+	uint32_t returnvalue;
+
+	returnvalue = user_hook_CreateFile(env, hook, 
+									   emu_string_char(filename),
+									   desiredaccess,
+									   sharemode,
+									   securityattr,
+									   createdisp,
+									   flagsandattr,
+									   templatefile);
+
+
+	emu_string_free(filename);
+
+	emu_cpu_reg32_set(c, eax, returnvalue);
+	emu_cpu_eip_set(c, eip_save);
+
+	return 0;
+}
 
 
 

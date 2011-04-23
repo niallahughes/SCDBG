@@ -97,4 +97,5 @@ int32_t	new_user_hook_GetEnvironmentVariableA(struct emu_env *env, struct emu_en
 int32_t	new_user_hook_VirtualAllocEx(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_WriteProcessMemory(struct emu_env *env, struct emu_env_hook *hook);
 int32_t	new_user_hook_CreateRemoteThread(struct emu_env *env, struct emu_env_hook *hook);
-
+int32_t	new_user_hook_MultiByteToWideChar(struct emu_env *env, struct emu_env_hook *hook);
+int32_t	new_user_hook_CreateFileW(struct emu_env *env, struct emu_env_hook *hook);

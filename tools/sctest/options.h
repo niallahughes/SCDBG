@@ -33,6 +33,7 @@ struct run_time_options
 	FILE *fopen;
 	int	  adjust_getfsize;
 	bool  report;
+	char* patch_file;
 
 	struct 
 	{
