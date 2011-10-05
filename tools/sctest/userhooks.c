@@ -2721,10 +2721,10 @@ int32_t	new_user_hook_GetEnvironmentVariableA(struct emu_env *env, struct emu_en
 	
 	char out[256]={0}; 
 
-	if(stricmp(var, "ProgramFiles") == 0 ) strcpy(out, "C:\\Program Files");
-	if(stricmp(var, "TEMP") == 0 )         strcpy(out, "C:\\Windows\\Temp");
-	if(stricmp(var, "TMP") == 0 )          strcpy(out, "C:\\Windows\\Temp");
-	if(stricmp(var, "WINDIR") == 0 )       strcpy(out, "C:\\Windows");
+	if(strcasecmp(var, "ProgramFiles") == 0 ) strcpy(out, "C:\\Program Files");
+	if(strcasecmp(var, "TEMP") == 0 )         strcpy(out, "C:\\Windows\\Temp");
+	if(strcasecmp(var, "TMP") == 0 )          strcpy(out, "C:\\Windows\\Temp");
+	if(strcasecmp(var, "WINDIR") == 0 )       strcpy(out, "C:\\Windows");
 
 	int sl = strlen(out);
 

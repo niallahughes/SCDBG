@@ -1,4 +1,4 @@
-# $Id: Makefile.am 1653 2008-07-16 09:49:17Z common $
+# $Id$
 
 AUTOMAKE_OPTIONS = foreign
 
