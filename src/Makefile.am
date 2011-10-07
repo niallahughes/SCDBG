@@ -6,7 +6,7 @@ AUTOMAKE_OPTIONS = foreign
 
 
 
-AM_CFLAGS = -pipe -D _GNU_SOURCE -I../include -Werror -Wall -g
+AM_CFLAGS = -pipe -D _GNU_SOURCE -I../include -Wall -g
 
 lib_LTLIBRARIES = libemu.la
 
