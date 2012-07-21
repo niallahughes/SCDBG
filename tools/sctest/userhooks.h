@@ -1,10 +1,16 @@
-
+/*
 #define POP_DWORD(cpu, dst_p) \
 { int32_t ret = emu_memory_read_dword(cpu->mem, cpu->reg[esp], dst_p); \
 if( ret != 0 ) \
 	return ret; \
 else \
-	cpu->reg[esp] += 4; }
+	if ( dst_p != &cpu->reg[esp] ) \
+		cpu->reg[esp] += 4; }
+
+//patched 7.6.12 - Signed-off-by: Paul Banks <foss@paulbanks.org> 
+//     http://src.carnivore.it/libemu/commit/?id=09bbeb583be41b96b9e8a5876a18ac698a77abfa
+
+
 
 #define PUSH_DWORD(cpu, arg)							\
 {														\
@@ -24,7 +30,7 @@ else \
 			return memret;														\
 	}																			\
 }
-
+*/
 uint32_t user_hook_ExitProcess(struct emu_env *env, struct emu_env_hook *hook, ...);
 uint32_t user_hook_ExitThread(struct emu_env *env, struct emu_env_hook *hook, ...);
 uint32_t user_hook_CreateProcess(struct emu_env *env, struct emu_env_hook *hook, ...);

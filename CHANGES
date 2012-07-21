@@ -1,5 +1,7 @@
 		Changelog for libemu
 
+7.21.12 - libemu pop esp patch
+
 4.23.11
 	exe - /dump mode highlights possible start offsets (90,E8.E9)
 	    - kinda added: MultiByteToWideChar, URLDownloadToCacheFileW,CreateProcessInternalW, CreateFileW
