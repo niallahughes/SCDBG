@@ -14,22 +14,10 @@
 homepage: http://libemu.mwcollect.org
 
 this build has been modified form original. see CHANGES for details
-windows binaries and some sample shellcode have been provided in the /bin folder
 
 building from svn:
   autoreconf -v -i
   ./configure --prefix=/opt/libemu; make install
 
-building from tarball:
-  tar xvfz libemu-VERSION.tar.gz
-  cd libemu-VERSION
-  ./configure --prefix=/opt/libemu; make install
-
-
-specific configure options:
-
---enable-debug          enable debug code generation [default=yes]
-	debug messages, instruction strings, nothing one wants to miss, even if it takes a lot of cpu cycles.
-
-
+scdbg binary is in ./tools/sctest/ after compilation
 

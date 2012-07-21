@@ -1,6 +1,6 @@
 AUTOMAKE_OPTIONS = foreign
 
-AM_CPPFLAGS = -I../../include -I ../../.. -Werror -Wall -g
+AM_CPPFLAGS = -I../../include -I ../../.. -Wall -g
 AM_LDFLAGS = -lemu -L../../src 
 
 
@@ -8,19 +8,19 @@ AM_LDFLAGS = -lemu -L../../src
 #AM_CPPFLAGS += -D_NO_TESTS
 
 
-bin_PROGRAMS = sctest
+bin_PROGRAMS = scdbg
 
-sctest_CPPFLAGS = ${LIB_CARGOS_INCDIR}  ${AM_CPPFLAGS}
-sctest_LDFLAGS =  ${LIB_CARGOS} ${LIB_CARGOS_LIBDIR} ${AM_LDFLAGS}
-sctest_LDADD = ../../src/libemu.la
-sctest_SOURCES = dot.c
-sctest_SOURCES += dot.h
-sctest_SOURCES += sctestmain.c
-sctest_SOURCES += tests.c
-sctest_SOURCES += tests.h
-sctest_SOURCES += userhooks.c
-sctest_SOURCES += userhooks.h
-sctest_SOURCES += nanny.c
-sctest_SOURCES += nanny.h
-sctest_SOURCES += options.h
+scdbg_CPPFLAGS = ${LIB_CARGOS_INCDIR}  ${AM_CPPFLAGS}
+scdbg_LDFLAGS =  ${LIB_CARGOS} ${LIB_CARGOS_LIBDIR} ${AM_LDFLAGS}
+scdbg_LDADD = ../../src/libemu.la
+scdbg_SOURCES = dot.c
+scdbg_SOURCES += dot.h
+scdbg_SOURCES += sctestmain.c
+scdbg_SOURCES += tests.c
+scdbg_SOURCES += tests.h
+scdbg_SOURCES += userhooks.c
+scdbg_SOURCES += userhooks.h
+scdbg_SOURCES += nanny.c
+scdbg_SOURCES += nanny.h
+scdbg_SOURCES += options.h
 

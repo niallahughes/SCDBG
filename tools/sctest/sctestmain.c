@@ -123,7 +123,7 @@
 #include "dot.h"
 #include "tests.h"
 #include "nanny.h"
-#include <io.h>
+//#include <sys/io.h>
 #include <termios.h>
 #include <signal.h>
 
